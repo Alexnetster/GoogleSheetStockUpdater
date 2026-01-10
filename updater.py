@@ -477,6 +477,9 @@ class StockDataUpdater:
         
         watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
         
+        # 주요 종목 요약 (모든 샘플 종목 중 가격 정보가 유효한 것만 표시)
+        unusual_summary_lines = []
+        
         # 1. [주요종목] 섹션 세분화 (개장한 시장 또는 코인 위주)
         asset_types = [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]
         for a_code, a_name in asset_types:
