@@ -185,9 +185,9 @@ class StockDataUpdater:
                 now_str
             ])
         
-        # 시트 업데이트 (최신 gspread 규격: values, range_name 순서)
+        # 시트 업데이트 (gspread v6+ 대응: 명시적 인자 사용)
         ws.clear()
-        ws.update(rows, 'A1')
+        ws.update(values=rows, range_name='A1')
         
         # 서식 지정 (D: Price, F: Volume, G: MarketCap 우측 정렬)
         try:
@@ -299,7 +299,7 @@ class StockDataUpdater:
 
         if target_iso in all_dates:
             row_idx = all_dates.index(target_iso) + 1
-            ws_monthly.update([row_data], f'A{row_idx}:F{row_idx}')
+            ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:F{row_idx}')
             print(f"Updated existing row for {target_iso}.")
         else:
             ws_monthly.append_row(row_data)
@@ -369,9 +369,20 @@ class StockDataUpdater:
         except Exception as e:
             print(f"ERROR: Failed to update calendar event: {str(e)}")
             if "Not Found" in str(e) or "404" in str(e):
-                print(f"HINT: Calendar '{CALENDAR_ID}' not found.")
-                print("1. Check if CALENDAR_ID in GitHub Secrets is your EXACT email address.")
-                print("2. Ensure you have shared your Google Calendar with the Service Account email and granted 'Make changes to events' permission.")
+                print(f"HINT: Calendar ID '{CALENDAR_ID}' not found.")
+                print("--- Troubleshooting Checklist ---")
+                print(f"1. Go to your Google Calendar settings for '{CALENDAR_ID}'.")
+                print("2. Under 'Share with specific people', check if you added this Service Account email:")
+                # 서비스 계정 이메일 추출 시도
+                sa_email = "your-service-account-email@..."
+                try:
+                    sa_info = json.loads(CREDENTIALS_JSON) if CREDENTIALS_JSON else {}
+                    sa_email = sa_info.get('client_email', sa_email)
+                except: pass
+                print(f"   >>> {sa_email}")
+                print("3. Ensure the permission is set to 'Make changes to events' (또는 '일정 변경').")
+                print("4. Double check the CALENDAR_ID in GitHub Secrets for typos or extra spaces.")
+                print("---------------------------------")
             elif "insufficientPermissions" in str(e):
                 print("HINT: Insufficient permissions. Make sure the service account has 'Make changes to events' access.")
 
