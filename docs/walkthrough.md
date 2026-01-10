@@ -81,18 +81,13 @@ Date       | Market Summary        | Watchlist Status | Unusual Stocks | Version
 ### 글로벌데이터 시트
 
 ```
-=== 📊 오늘의 시장 현황 ===
-Market Summary
-  KR: KOSPI +0.75%, KOSDAQ +0.41%
-  US: S&P500 +0.65%, NASDAQ +0.81%
-  환율: USD/KRW +3.9원
-
-Indices Info
-  KOSPI: 4,586.3 (+0.75%)
-  KOSDAQ: 947.9 (+0.41%)
-  S&P500: 6,966.3 (+0.65%)
-  NASDAQ: 23,671.3 (+0.81%)
-  USD/KRW: 1,450.1 (+0.27%)
+=== 📊 Market Summary ===
+번호 | 국가 | 거래소   | 지수      | 변동폭
+1    | 한국 | KOSPI    | 4,586.3   | +0.75%
+2    | 한국 | KOSDAQ   | 947.9     | +0.41%
+3    | 미국 | S&P500   | 6,966.3   | +0.65%
+4    | 미국 | NASDAQ   | 23,671.3  | +0.81%
+5    | 환율 | USD/KRW  | 1,450.1   | +0.27%
 
 === 📈 주요 종목 데이터 ===
 Asset | Ticker | Name | Price | ChangeRate | Volume | MarketCap | Update

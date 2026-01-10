@@ -177,25 +177,33 @@ class StockDataUpdater:
         # 시장 요약 정보 추가 (상단)
         if indices:
             rows.append(['=== 📊 Market Summary ===', '', '', '', '', '', '', f'업데이트: {now_str}'])
-            rows.append([])  # 빈 줄
+            # Market Summary 헤더
+            summary_header = ['번호', '국가', '거래소', '지수', '변동폭', '', '', '']
+            rows.append(summary_header)
             
-            # Market Summary - 국가/거래소 형태로 표시
+            # Market Summary - 번호, 국가, 거래소 분리
+            idx_num = 1
             for k, v in indices.items():
-                # 국가/거래소 정보 결정
+                # 국가, 거래소 정보 결정
                 if k in ['KOSPI', 'KOSDAQ']:
-                    country_exchange = f"한국/{k}"
+                    country = "한국"
+                    exchange = k
                 elif k in ['S&P500', 'NASDAQ']:
-                    country_exchange = f"미국/{k}"
+                    country = "미국"
+                    exchange = k
                 elif k == 'USD/KRW':
-                    country_exchange = "환율/USD/KRW"
+                    country = "환율"
+                    exchange = "USD/KRW"
                 else:
-                    country_exchange = k
+                    country = "-"
+                    exchange = k
                 
                 # 지수, 변동폭 (우측 정렬용)
                 price_str = f"{v['price']:,.1f}"  # 천단위 콤마
                 rate_str = f"{v['rate']:+.2f}%"
                 
-                rows.append([country_exchange, price_str, rate_str, '', '', '', '', ''])
+                rows.append([str(idx_num), country, exchange, price_str, rate_str, '', '', ''])
+                idx_num += 1
             
             rows.append([])  # 빈 줄
             rows.append([])  # 빈 줄
@@ -222,17 +230,16 @@ class StockDataUpdater:
         try:
             fmt = CellFormat(horizontalAlignment='RIGHT')
             
-            # Market Summary 섹션의 지수, 변동폭 우측 정렬 (B, C 컬럼)
+            # Market Summary 섹션의 지수, 변동폭 우측 정렬 (D, E 컬럼)
             if indices:
                 # indices 개수만큼 행 계산 (헤더 2줄 + 데이터)
-                summary_start = 3  # "=== 📊 Market Summary ===" 다음 빈 줄 다음
+                summary_start = 3  # "=== 📊 Market Summary ===" 다음 헤더 다음
                 summary_end = summary_start + len(indices)
-                format_cell_range(ws, f'B{summary_start}:C{summary_end}', fmt)
+                format_cell_range(ws, f'D{summary_start}:E{summary_end}', fmt)
             
-            # 주요 종목 데이터의 Price, Volume, MarketCap 우측 정렬 (D, F, G 컬럼)
+            # 주요 종목 데이터의 Price, ChangeRate, Volume, MarketCap 우측 정렬 (D, E, F, G 컬럼)
             data_start_row = len(rows) - len(data) + 1
-            format_cell_range(ws, f'D{data_start_row}:D100', fmt)
-            format_cell_range(ws, f'F{data_start_row}:G100', fmt)
+            format_cell_range(ws, f'D{data_start_row}:G100', fmt)
             
             print("Successfully applied right-alignment to Market Summary and data columns.")
         except Exception as e:
