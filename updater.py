@@ -233,14 +233,23 @@ class StockDataUpdater:
             ws.append_row(['Date', 'Market Summary', 'Indices Info', 'Watchlist Status', 'Unusual Stocks', 'Version'])
             return ws
 
-    def process_and_report(self):
-        print(f"--- Running Updater for Target Date: {self.target_date} ---")
+    def process_and_report(self, manual_date=False):
+        print(f"--- Running Updater (Initial Target: {self.target_date}) ---")
         
-        print("1. 수집 중: 시장 지표...")
+        print("1. 수집 중: 시장 지표 및 실제 거래일 확인...")
         indices = self.get_market_indices()
         
-        # 만약 코인 데이터가 중요한 경우, 코인은 항상 target_date 데이터가 있어야 함
-        # 주식 지수 중 하나라도 실제 날짜가 target_date와 다르면 휴장 요약 문구 추가 가능
+        # 실제 데이터 날짜 기반으로 target_date 자동 조정 (수동 입력이 아닐 경우)
+        if not manual_date and indices:
+            # 주요 지수(KOSPI, S&P500)의 날짜 중 가장 최근 것을 기준일로 채택
+            dates = [v.get('date') for v in indices.values() if v.get('date')]
+            if dates:
+                actual_market_date = max(dates)
+                if actual_market_date != self.target_date.isoformat():
+                    print(f">>> Market Date Detected: {actual_market_date} (Changed from {self.target_date})")
+                    self.target_date = datetime.datetime.strptime(actual_market_date, '%Y-%m-%d').date()
+
+        print(f">>> Final Effective Date: {self.target_date}")
         
         print("2. 수집 중: 관심종목...")
         watchlist_raw = self.get_watchlist()
@@ -358,4 +367,4 @@ if __name__ == "__main__":
         exit(1)
     
     updater = StockDataUpdater(target_date=args.date)
-    updater.process_and_report()
+    updater.process_and_report(manual_date=True if args.date else False)
