@@ -371,7 +371,7 @@ class StockDataUpdater:
         # 한국 시장 개장 시 한국 주식 수집
         if is_kr_open:
             print(">>> 한국 시장 개장: 한국 주식 수집")
-            sample_kr = ['005930', '000660', '005380', '035420']  # 삼성전자, SK하이닉스, 현대차, NAVER
+            sample_kr = ['005930', '000660', '009150', '006400', '035420', '005380']  # 삼성전자, 하이닉스, 삼성전기, 삼성sdi, NAVER, 현대차
             market_all.extend(self.get_stock_data(sample_kr, 'KR'))
         else:
             print(">>> 한국 시장 휴장: 한국 주식 제외")
@@ -379,7 +379,7 @@ class StockDataUpdater:
         # 미국 시장 개장 시 미국 주식 수집
         if is_us_open:
             print(">>> 미국 시장 개장: 미국 주식 수집")
-            sample_us = ['AAPL', 'TSLA', 'NVDA', 'MSFT']  # 애플, 테슬라, 엔비디아, 마이크로소프트
+            sample_us = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'PLTR', 'IONQ', 'RGTI', 'SOXL', 'TQQQ', 'INTC']  # 주요 빅테크 및 성장주, 레버리지 ETF
             market_all.extend(self.get_stock_data(sample_us, 'US'))
         else:
             print(">>> 미국 시장 휴장: 미국 주식 제외")
@@ -396,7 +396,7 @@ class StockDataUpdater:
         
         # 4-1. 네이버 증권 스크래핑 (실시간/핫 종목)
         naver_unusual = []
-        if SCRAPER_AVAILABLE:
+        if SCRAPER_AVAILABLE and is_kr_open:
             try:
                 # 한국 시장 전수 조사 (FDR 사용)
                 # 상한가 전수 조사 및 고거래량(500만 이상) 종목 추출
@@ -412,14 +412,15 @@ class StockDataUpdater:
                 print(">>> 네이버 실시간 스크래핑 중...")
                 naver_unusual.extend(scrape_foreign_buy(max_items=10))
                 
-                # 장중이라면 실시간 거래량/상한가도 보조적으로 수집
-                if is_kr_open:
-                    naver_unusual.extend(scrape_volume_surge(max_items=5))
-                    naver_unusual.extend(scrape_price_limit(max_items=5))
+                # 장중 실시간 거래량/상한가 수집
+                naver_unusual.extend(scrape_volume_surge(max_items=5))
+                naver_unusual.extend(scrape_price_limit(max_items=5))
                     
                 print(f">>> 수집 완료: 전수조사 및 스크래핑 총 {len(naver_unusual)}개")
             except Exception as e:
                 print(f"Warning: 스크래핑/전수조사 중 실패: {e}")
+        elif not is_kr_open:
+            print(">>> 휴장일: 국내 주식 특이종목 수집을 건너뜁니다.")
         
         # 4-2. 자체 분석 (보유 종목/관심 종목 대상 완화된 기준)
         internal_unusual = [
@@ -454,15 +455,24 @@ class StockDataUpdater:
         
         watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
         
-        # 주요 종목 요약 (모든 샘플 종목 표시)
-        major_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in market_all])
+        # 주요 종목 요약 (모든 샘플 종목 중 가격 정보가 유효한 것만 표시)
+        major_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in market_all if d.get('Price', 0) > 0])
         
         # 특이종목 요약 - 리포트 형식 개편 (주요종목 포함)
         unusual_summary_lines = []
         
-        # 1. [주요종목] 섹션 (국장, 미장, 코인 샘플)
-        # 가격 정보가 정상적인 것만 표시
-        major_list = [d for d in market_all if d.get('Price', 0) > 0]
+        # 1. [주요종목] 섹션 (개장한 시장 또는 코인 위주)
+        # 가격 정보가 정상이고 해당 시장이 개장했거나 코인인 경우만 표시
+        major_list = []
+        for d in market_all:
+            if d.get('Price', 0) <= 0: continue
+            
+            asset = d.get('Asset', '')
+            if asset == 'KR' and not is_kr_open: continue
+            if asset == 'US' and not is_us_open: continue
+            
+            major_list.append(d)
+            
         if major_list:
             unusual_summary_lines.append("[주요종목]")
             for d in major_list:
@@ -580,8 +590,8 @@ class StockDataUpdater:
             cal_desc_parts.append("## 🔥 실시간 특이종목")
             cal_desc_parts.append("")
             
-            # 1. 네이버 증권 (시장 주목)
-            naver_stocks_cal = [d for d in unusual if d.get('Source') == 'Naver']
+            # 1. 네이버 증권 (시장 주목) - 가격 정보가 있는 것만 표시
+            naver_stocks_cal = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
             if naver_stocks_cal:
                 cal_desc_parts.append("### 📰 네이버 증권 (시장 주목)")
                 for d in naver_stocks_cal[:8]:  # 최대 8개
@@ -589,8 +599,8 @@ class StockDataUpdater:
                     cal_desc_parts.append(f"- [{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
                 cal_desc_parts.append("")
             
-            # 2. 자체 분석 (완화 기준)
-            internal_stocks_cal = [d for d in unusual if d.get('Source') == 'Internal']
+            # 2. 자체 분석 (완화 기준) - 가격 정보가 있는 것만 표시
+            internal_stocks_cal = [d for d in unusual if d.get('Source') == 'Internal' and d.get('Price', 0) > 0]
             if internal_stocks_cal:
                 cal_desc_parts.append("### 📊 자체 분석 (완화 기준)")
                 for d in internal_stocks_cal[:5]:  # 최대 5개
