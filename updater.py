@@ -457,19 +457,33 @@ class StockDataUpdater:
         # 주요 종목 요약 (모든 샘플 종목 표시)
         major_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in market_all])
         
-        # 특이종목 요약 - 네이버 우선, 자체 분석 보조
+        # 특이종목 요약 - 리포트 형식 개편 (주요종목 포함)
         unusual_summary_lines = []
         
-        # 1. 네이버 증권 (시장 주목)
-        naver_stocks = [d for d in unusual if d.get('Source') == 'Naver']
+        # 1. [주요종목] 섹션 (국장, 미장, 코인 샘플)
+        # 가격 정보가 정상적인 것만 표시
+        major_list = [d for d in market_all if d.get('Price', 0) > 0]
+        if major_list:
+            unusual_summary_lines.append("[주요종목]")
+            for d in major_list:
+                unusual_summary_lines.append(f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+            unusual_summary_lines.append("")
+
+        # 2. [특이종목] 섹션 시작
+        unusual_summary_lines.append("[특이종목]")
+
+        # 3. [특이종목/네이버요약] (네이버/FDR 데이터)
+        # 가격 정보가 없는 종목은 필터링
+        naver_stocks = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
         if naver_stocks:
+            unusual_summary_lines.append("[특이종목/네이버요약]")
             unusual_summary_lines.append("📰 네이버 증권 (시장 주목)")
             for d in naver_stocks[:10]:  # 최대 10개
                 category = d.get('Category', '기타')
                 unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
             unusual_summary_lines.append("")
         
-        # 2. 자체 분석 (완화 기준)
+        # 4. 자체 분석 (완화 기준)
         internal_stocks = [d for d in unusual if d.get('Source') == 'Internal']
         if internal_stocks:
             unusual_summary_lines.append("📊 자체 분석 (완화 기준)")
