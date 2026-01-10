@@ -164,17 +164,39 @@ class StockDataUpdater:
                 print(f"Error fetching {asset_type} {ticker}: {e}")
         return data
 
-    def update_global_data(self, data):
+    def update_global_data(self, data, indices=None):
         """글로벌데이터 시트 갱신 및 서식 지정 (Price, Volume, MarketCap 우측 정렬)"""
         try:
             ws = self.sh.worksheet('글로벌데이터')
         except gspread.exceptions.WorksheetNotFound:
             ws = self.sh.add_worksheet(title='글로벌데이터', rows=100, cols=10)
         
-        # 헤더 및 데이터 준비
-        header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap', 'Update']
-        rows = [header]
+        rows = []
         now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 시장 요약 정보 추가 (상단)
+        if indices:
+            rows.append(['=== 📊 오늘의 시장 현황 ===', '', '', '', '', '', '', f'업데이트: {now_str}'])
+            rows.append([])  # 빈 줄
+            
+            # Market Summary
+            rows.append(['Market Summary', '', '', '', '', '', '', ''])
+            rows.append(['KR', f"KOSPI {indices.get('KOSPI', {}).get('rate', 0):+.2f}%, KOSDAQ {indices.get('KOSDAQ', {}).get('rate', 0):+.2f}%", '', '', '', '', '', ''])
+            rows.append(['US', f"S&P500 {indices.get('S&P500', {}).get('rate', 0):+.2f}%, NASDAQ {indices.get('NASDAQ', {}).get('rate', 0):+.2f}%", '', '', '', '', '', ''])
+            rows.append(['환율', f"USD/KRW {indices.get('USD/KRW', {}).get('change', 0):+.1f}원", '', '', '', '', '', ''])
+            rows.append([])  # 빈 줄
+            
+            # Indices Info
+            rows.append(['Indices Info', '', '', '', '', '', '', ''])
+            for k, v in indices.items():
+                rows.append([k, f"{v['price']:,.1f}", f"{v['rate']:+.2f}%", '', '', '', '', ''])
+            rows.append([])  # 빈 줄
+            rows.append([])  # 빈 줄
+        
+        # 주요 종목 데이터 헤더 및 데이터
+        rows.append(['=== 📈 주요 종목 데이터 ===', '', '', '', '', '', '', ''])
+        header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap', 'Update']
+        rows.append(header)
         
         for d in data:
             rows.append([
@@ -192,8 +214,10 @@ class StockDataUpdater:
         # 서식 지정 (D: Price, F: Volume, G: MarketCap 우측 정렬)
         try:
             fmt = CellFormat(horizontalAlignment='RIGHT')
-            format_cell_range(ws, 'D2:D100', fmt)
-            format_cell_range(ws, 'F2:G100', fmt)
+            # 데이터 시작 행을 동적으로 계산 (indices가 있으면 더 아래에서 시작)
+            data_start_row = len(rows) - len(data) + 1
+            format_cell_range(ws, f'D{data_start_row}:D100', fmt)
+            format_cell_range(ws, f'F{data_start_row}:G100', fmt)
             print("Successfully applied right-alignment to Price, Volume, MarketCap columns.")
         except Exception as e:
             print(f"Error applying formatting: {e}")
@@ -267,12 +291,24 @@ class StockDataUpdater:
         market_all = self.get_stock_data(sample_kr, 'KR') + self.get_stock_data(sample_us, 'US')
 
         print("3.5. 갱신 중: 글로벌데이터 시트...")
-        self.update_global_data(market_all)
+        self.update_global_data(market_all, indices)
 
         unusual = [d for d in market_all if abs(d['ChangeRate']) >= 15.0 or d['VolSpike'] >= 3.0]
 
-        # 요약 생성
-        idx_summary = " / ".join([f"{k}: {v['price']:,.1f}({v['rate']:+.2f}%)" for k, v in indices.items()])
+
+        # 요약 생성 - Market Summary (여러 줄 형식)
+        market_summary_lines = []
+        market_summary_lines.append(f"KR: KOSPI {indices.get('KOSPI', {}).get('rate', 0):+.2f}%, KOSDAQ {indices.get('KOSDAQ', {}).get('rate', 0):+.2f}%")
+        market_summary_lines.append(f"US: S&P500 {indices.get('S&P500', {}).get('rate', 0):+.2f}%, NASDAQ {indices.get('NASDAQ', {}).get('rate', 0):+.2f}%")
+        market_summary_lines.append(f"환율: USD/KRW {indices.get('USD/KRW', {}).get('change', 0):+.1f}원")
+        market_summary = "\n".join(market_summary_lines)
+        
+        # Indices Info (여러 줄 형식)
+        idx_summary_lines = []
+        for k, v in indices.items():
+            idx_summary_lines.append(f"{k}: {v['price']:,.1f} ({v['rate']:+.2f}%)")
+        idx_summary = "\n".join(idx_summary_lines)
+        
         watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
         
         # 주요 종목 요약 (모든 샘플 종목 표시)
@@ -290,12 +326,13 @@ class StockDataUpdater:
 
         row_data = [
             target_iso,
-            f"KR:{indices.get('KOSPI', {}).get('rate', 0):+.2f}%, US:{indices.get('S&P500', {}).get('rate', 0):+.2f}%",
+            market_summary,
             idx_summary,
             watch_summary if watch_summary else "N/A",
             detailed_market_info,
             f"{APP_NAME} {VERSION}"
         ]
+
 
         if target_iso in all_dates:
             row_idx = all_dates.index(target_iso) + 1
