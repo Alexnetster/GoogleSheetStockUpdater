@@ -45,7 +45,13 @@
     - **Name**: `SPREADSHEET_ID`  
       **Value**: 위에서 확인한 시트 고유 ID
     - **Name**: `CALENDAR_ID` (선택 사항)  
-      **Value**: 본인의 이메일 주소를 입력하면 기본 캘린더에 저장됩니다.
+      **Value**: 사용할 캘린더의 고유 ID를 입력합니다.
+      - **캘린더 ID 찾는 방법**:
+        1. [구글 캘린더](https://calendar.google.com/) 접속
+        2. 왼쪽 사이드바에서 사용할 캘린더 찾기
+        3. 캘린더 옆 점 3개 메뉴 → "설정 및 공유" 클릭
+        4. "캘린더 통합" 섹션에서 **"캘린더 ID"** 확인
+        5. 예: `xxxxx@group.calendar.google.com` 또는 `본인이메일@gmail.com` (기본 캘린더)
 
 ---
 
