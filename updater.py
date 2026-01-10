@@ -17,10 +17,10 @@ from gspread_formatting import *
 APP_NAME = "DailyStockUpdater"
 VERSION = "v1.3.0_20260110"
 
-# 환경 변수 및 설정
+# 환경 변수 및 설정 (공백 제거 처리)
 CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
-SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
-CALENDAR_ID = os.getenv('CALENDAR_ID', 'primary')
+SPREADSHEET_ID = os.getenv('SPREADSHEET_ID', '').strip()
+CALENDAR_ID = os.getenv('CALENDAR_ID', 'primary').strip()
 
 class StockDataUpdater:
     def __init__(self, target_date=None):
@@ -329,9 +329,12 @@ class StockDataUpdater:
         print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
 
     def create_calendar_event(self, title, description):
-        print(f"DEBUG: Attempting to update calendar. ID={CALENDAR_ID}")
+        # 마스킹 방지 및 오타 확인을 위한 상세 출력
+        id_display = "|".join(list(CALENDAR_ID))
+        print(f"DEBUG: CALENDAR_ID Raw Check: [{id_display}] (Length: {len(CALENDAR_ID)})")
+        
         if CALENDAR_ID == 'primary':
-            print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar, not yours. Ensure you set this to your email address in GitHub Secrets.")
+            print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar, not yours.")
 
         # 해당 날짜의 기존 이벤트 검색 및 삭제 (중복 방지)
         search_start = (self.target_date - datetime.timedelta(days=1)).isoformat() + "T00:00:00Z"
@@ -372,7 +375,8 @@ class StockDataUpdater:
                 print(f"HINT: Calendar ID '{CALENDAR_ID}' not found.")
                 print("--- Troubleshooting Checklist ---")
                 print(f"1. Go to your Google Calendar settings for '{CALENDAR_ID}'.")
-                print("2. Under 'Share with specific people', check if you added this Service Account email:")
+                print("2. Check 'Settings for my calendars' -> 'Share with specific people'.")
+                print("3. Ensure you have added the Service Account as an editor:")
                 # 서비스 계정 이메일 추출 시도
                 sa_email = "your-service-account-email@..."
                 try:
@@ -380,8 +384,8 @@ class StockDataUpdater:
                     sa_email = sa_info.get('client_email', sa_email)
                 except: pass
                 print(f"   >>> {sa_email}")
-                print("3. Ensure the permission is set to 'Make changes to events' (또는 '일정 변경').")
-                print("4. Double check the CALENDAR_ID in GitHub Secrets for typos or extra spaces.")
+                print("4. IMPORTANT: Make sure the permission is set to 'Make changes to events' (일정 변경).")
+                print("5. Double check if the Calendar ID in GitHub Secrets has ANY typos (even one letter).")
                 print("---------------------------------")
             elif "insufficientPermissions" in str(e):
                 print("HINT: Insufficient permissions. Make sure the service account has 'Make changes to events' access.")
