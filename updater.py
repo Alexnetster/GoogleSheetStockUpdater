@@ -417,7 +417,7 @@ class StockDataUpdater:
                     naver_unusual.extend(scrape_volume_surge(max_items=5))
                     naver_unusual.extend(scrape_price_limit(max_items=5))
                     
-                print(f text=f">>> 수집 완료: 전수조사 및 스크래핑 총 {len(naver_unusual)}개")
+                print(f">>> 수집 완료: 전수조사 및 스크래핑 총 {len(naver_unusual)}개")
             except Exception as e:
                 print(f"Warning: 스크래핑/전수조사 중 실패: {e}")
         
