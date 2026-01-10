@@ -1,0 +1,10 @@
+gspread
+google-auth
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+yfinance
+finance-datareader
+pandas
+beautifulsoup4
+requests
