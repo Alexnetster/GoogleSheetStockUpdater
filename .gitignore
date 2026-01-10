@@ -1,1 +1,4 @@
-/,googleclude
+
+# 로컬 개발용 환경 변수 파일 (절대 커밋 금지!)
+.env
+,googleclude/stable-vista.json

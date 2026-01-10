@@ -13,9 +13,32 @@ import time
 import argparse
 from gspread_formatting import *
 
+# 로컬 개발용 .env 파일 로드 (선택사항)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # .env 파일이 있으면 로드
+    print("✅ .env 파일 로드 완료 (로컬 개발 모드)")
+except ImportError:
+    print("ℹ️ python-dotenv 미설치 (GitHub Actions 모드)")
+except Exception as e:
+    print(f"ℹ️ .env 파일 없음 또는 로드 실패: {e}")
+
+# 네이버 증권 스크래핑 모듈
+try:
+    from scraper import scrape_volume_surge, scrape_price_limit, scrape_foreign_buy
+    SCRAPER_AVAILABLE = True
+except ImportError:
+    print("Warning: scraper.py 모듈을 찾을 수 없습니다. 네이버 증권 데이터는 수집되지 않습니다.")
+    SCRAPER_AVAILABLE = False
+
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
 VERSION = "v1.4.0_20260110"
+
+# 특이종목 기준 (자체 분석용 - 완화된 기준)
+UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
+UNUSUAL_VOL_SPIKE = 2.0     # 거래량 급증 기준 (배수)
+MIN_MARKET_CAP = 1000       # 최소 시가총액 (억원)
 
 # 환경 변수 및 설정 (공백 제거 처리)
 CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
@@ -228,20 +251,26 @@ class StockDataUpdater:
         
         # 서식 지정
         try:
-            fmt = CellFormat(horizontalAlignment='RIGHT')
+            fmt_right = CellFormat(horizontalAlignment='RIGHT')
+            fmt_left = CellFormat(horizontalAlignment='LEFT')
             
-            # Market Summary 섹션의 지수, 변동폭 우측 정렬 (D, E 컬럼)
+            # Market Summary 섹션 서식
             if indices:
                 # indices 개수만큼 행 계산 (헤더 2줄 + 데이터)
                 summary_start = 3  # "=== 📊 Market Summary ===" 다음 헤더 다음
                 summary_end = summary_start + len(indices)
-                format_cell_range(ws, f'D{summary_start}:E{summary_end}', fmt)
+                
+                # 국가, 거래소 좌측 정렬 (B, C 컬럼)
+                format_cell_range(ws, f'B{summary_start}:C{summary_end}', fmt_left)
+                
+                # 지수, 변동폭 우측 정렬 (D, E 컬럼)
+                format_cell_range(ws, f'D{summary_start}:E{summary_end}', fmt_right)
             
             # 주요 종목 데이터의 Price, ChangeRate, Volume, MarketCap 우측 정렬 (D, E, F, G 컬럼)
             data_start_row = len(rows) - len(data) + 1
-            format_cell_range(ws, f'D{data_start_row}:G100', fmt)
+            format_cell_range(ws, f'D{data_start_row}:G100', fmt_right)
             
-            print("Successfully applied right-alignment to Market Summary and data columns.")
+            print("Successfully applied alignment to Market Summary and data columns.")
         except Exception as e:
             print(f"Error applying formatting: {e}")
 
@@ -274,12 +303,29 @@ class StockDataUpdater:
         """월별 탭 관리 및 반환 (target_date 기준)"""
         tab_name = self.target_date.strftime('%Y-%m')
         try:
-            return self.sh.worksheet(tab_name)
+            ws = self.sh.worksheet(tab_name)
+            
+            # 기존 시트에도 서식 적용 (모든 컬럼 상단 정렬)
+            try:
+                fmt_top = CellFormat(verticalAlignment='TOP')
+                format_cell_range(ws, 'A:E', fmt_top)  # 모든 컬럼 상단 정렬
+            except Exception as e:
+                print(f"Warning: Could not apply formatting to existing sheet: {e}")
+            
+            return ws
         except gspread.exceptions.WorksheetNotFound:
             # 새 시트 생성 시에만 최신 구조 적용
             ws = self.sh.add_worksheet(title=tab_name, rows=1000, cols=15)
             ws.append_row(['Date', 'Market Summary', 'Watchlist Status', 'Unusual Stocks', 'Version'])
-            print(f"✅ 새 월별 시트 생성: {tab_name}")
+            
+            # 모든 컬럼 상단 정렬 적용
+            try:
+                fmt_top = CellFormat(verticalAlignment='TOP')
+                format_cell_range(ws, 'A:E', fmt_top)  # 모든 컬럼 상단 정렬
+                print(f"✅ 새 월별 시트 생성 및 서식 적용: {tab_name}")
+            except Exception as e:
+                print(f"✅ 새 월별 시트 생성: {tab_name} (서식 적용 실패: {e})")
+            
             return ws
 
     def process_and_report(self, manual_date=False):
@@ -346,7 +392,42 @@ class StockDataUpdater:
         print("3.5. 갱신 중: 글로벌데이터 시트...")
         self.update_global_data(market_all, indices)
 
-        unusual = [d for d in market_all if abs(d['ChangeRate']) >= 15.0 or d['VolSpike'] >= 3.0]
+        print("4. 수집 중: 특이종목 (네이버 증권 + 자체 분석)...")
+        
+        # 4-1. 네이버 증권 스크래핑 (한국 시장 개장 시만)
+        naver_unusual = []
+        if is_kr_open and SCRAPER_AVAILABLE:
+            try:
+                print(">>> 네이버 증권 스크래핑 중...")
+                naver_unusual.extend(scrape_volume_surge(max_items=10))
+                naver_unusual.extend(scrape_price_limit(max_items=10))
+                naver_unusual.extend(scrape_foreign_buy(max_items=10))
+                print(f">>> 네이버 증권: {len(naver_unusual)}개 종목 수집 완료")
+            except Exception as e:
+                print(f"Warning: 네이버 증권 스크래핑 실패: {e}")
+        
+        # 4-2. 자체 분석 (완화된 기준)
+        internal_unusual = [
+            d for d in market_all 
+            if (abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE or d.get('VolSpike', 0) >= UNUSUAL_VOL_SPIKE)
+            and d.get('MarketCap', 0) >= MIN_MARKET_CAP * 100_000_000  # 억원 → 원
+        ]
+        # Source 태그 추가
+        for d in internal_unusual:
+            d['Source'] = 'Internal'
+        
+        print(f">>> 자체 분석: {len(internal_unusual)}개 종목 추출 완료")
+        
+        # 4-3. 데이터 병합 및 중복 제거 (네이버 우선)
+        all_unusual = naver_unusual + internal_unusual
+        seen = set()
+        unusual = []
+        for d in all_unusual:
+            if d['Ticker'] not in seen:
+                unusual.append(d)
+                seen.add(d['Ticker'])
+        
+        print(f">>> 최종 특이종목: {len(unusual)}개 (네이버 {len(naver_unusual)}개 + 자체 {len(internal_unusual) - (len(all_unusual) - len(unusual))}개)")
 
 
         # 요약 생성 - Market Summary (여러 줄 형식)
@@ -360,16 +441,36 @@ class StockDataUpdater:
         
         # 주요 종목 요약 (모든 샘플 종목 표시)
         major_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in market_all])
-        # 특이 종목 요약
-        unusual_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}% / 거래량 {d['VolSpike']}배): {d['News']}" for d in unusual])
+        
+        # 특이종목 요약 - 네이버 우선, 자체 분석 보조
+        unusual_summary_lines = []
+        
+        # 1. 네이버 증권 (시장 주목)
+        naver_stocks = [d for d in unusual if d.get('Source') == 'Naver']
+        if naver_stocks:
+            unusual_summary_lines.append("📰 네이버 증권 (시장 주목)")
+            for d in naver_stocks[:10]:  # 최대 10개
+                category = d.get('Category', '기타')
+                unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+            unusual_summary_lines.append("")
+        
+        # 2. 자체 분석 (완화 기준)
+        internal_stocks = [d for d in unusual if d.get('Source') == 'Internal']
+        if internal_stocks:
+            unusual_summary_lines.append("📊 자체 분석 (완화 기준)")
+            for d in internal_stocks[:5]:  # 최대 5개
+                reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
+                unusual_summary_lines.append(f"[{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+        
+        unusual_summary = "\n".join(unusual_summary_lines) if unusual_summary_lines else "N/A"
 
-        print("4. 기록 중: 월별 일지 (중복 체크 포함)...")
+        print("5. 기록 중: 월별 일지 (중복 체크 포함)...")
         ws_monthly = self.get_monthly_worksheet()
         all_dates = ws_monthly.col_values(1)
         target_iso = self.target_date.isoformat()
         
-        # 시트에는 주요 종목과 특이 종목을 합쳐서 기록
-        detailed_market_info = f"[주요종목]\n{major_summary}\n\n[특이종목]\n{unusual_summary if unusual_summary else '없음'}"
+        # 시트에는 특이종목만 기록 (네이버 우선 형식)
+        detailed_market_info = unusual_summary
 
         row_data = [
             target_iso,
@@ -394,16 +495,16 @@ class StockDataUpdater:
         # 시장 개장 상태에 따라 제목 결정
         if is_kr_open and is_us_open:
             # 양쪽 다 개장
-            cal_title = f"[{self.target_date}] 투자일지 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+            cal_title = f"투자일지 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
         elif is_kr_open:
             # 한국만 개장
-            cal_title = f"[{self.target_date}] 투자일지 (미장 휴장) KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+            cal_title = f"투자일지 (미장 휴장) 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
         elif is_us_open:
             # 미국만 개장
-            cal_title = f"[{self.target_date}] 투자일지 (국장 휴장) S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
+            cal_title = f"투자일지 (국장 휴장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
         else:
             # 양쪽 다 휴장
-            cal_title = f"[{self.target_date}] 📅 주식 시장 휴장"
+            cal_title = f"투자일지 📅 주식 시장 휴장"
         
         # 캘린더 본문 생성
         cal_desc_parts = []
@@ -437,16 +538,37 @@ class StockDataUpdater:
             cal_desc_parts.append(f"- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f} (전일대비 {indices.get('USD/KRW',{}).get('change',0):+.1f}원)")
             cal_desc_parts.append("")
         
+        
         # 주요 종목 (주식이 있으면 표시)
         stock_data = [d for d in market_all if d.get('Asset') in ['KR', 'US']]
         if stock_data:
             cal_desc_parts.append("## 🏢 주요 종목 현황")
             cal_desc_parts.append(major_summary)
             cal_desc_parts.append("")
-            
-            cal_desc_parts.append("## 🔥 실시간 특이종목 (거래량/변동성)")
-            cal_desc_parts.append(unusual_summary if unusual_summary else "오늘의 특이종목이 없습니다.")
+        
+        # 특이종목 (네이버 우선 표시)
+        if unusual:
+            cal_desc_parts.append("## 🔥 실시간 특이종목")
             cal_desc_parts.append("")
+            
+            # 1. 네이버 증권 (시장 주목)
+            naver_stocks_cal = [d for d in unusual if d.get('Source') == 'Naver']
+            if naver_stocks_cal:
+                cal_desc_parts.append("### 📰 네이버 증권 (시장 주목)")
+                for d in naver_stocks_cal[:8]:  # 최대 8개
+                    category = d.get('Category', '기타')
+                    cal_desc_parts.append(f"- [{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+                cal_desc_parts.append("")
+            
+            # 2. 자체 분석 (완화 기준)
+            internal_stocks_cal = [d for d in unusual if d.get('Source') == 'Internal']
+            if internal_stocks_cal:
+                cal_desc_parts.append("### 📊 자체 분석 (완화 기준)")
+                for d in internal_stocks_cal[:5]:  # 최대 5개
+                    reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
+                    cal_desc_parts.append(f"- [{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+                cal_desc_parts.append("")
+
         
         # 코인 (항상 표시)
         coin_data = [d for d in market_all if d.get('Asset') == 'Coin']
@@ -518,26 +640,45 @@ class StockDataUpdater:
         #     print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar.")
 
         # 해당 날짜의 기존 이벤트 검색 및 삭제 (중복 방지)
-        search_start = (self.target_date - datetime.timedelta(days=1)).isoformat() + "T00:00:00Z"
-        search_end = (self.target_date + datetime.timedelta(days=2)).isoformat() + "T00:00:00Z"
+        # "투자일지"가 포함된 이벤트를 모두 삭제 (하루에 하나만 유지)
+        search_start = self.target_date.isoformat() + "T00:00:00Z"
+        search_end = (self.target_date + datetime.timedelta(days=1)).isoformat() + "T00:00:00Z"
         
         try:
-            # print(f"DEBUG: Searching events between {search_start} and {search_end}")
+            print(f">>> 기존 투자일지 확인 중: {self.target_date.isoformat()}")
             events_result = self.calendar_service.events().list(
-                calendarId=CALENDAR_ID, timeMin=search_start, timeMax=search_end,
-                singleEvents=True, orderBy='startTime'
+                calendarId=CALENDAR_ID, 
+                timeMin=search_start, 
+                timeMax=search_end,
+                singleEvents=True, 
+                orderBy='startTime'
             ).execute()
             events = events_result.get('items', [])
-            # print(f"DEBUG: Found {len(events)} events in range.")
             
+            deleted_count = 0
             for ev in events:
+                ev_summary = ev.get('summary', '')
                 ev_date = ev.get('start', {}).get('date')
-                if ev_date == self.target_date.isoformat() and "투자일지" in ev.get('summary', ''):
-                    # print(f"DEBUG: Found matching event to delete: {ev.get('summary')} (ID: {ev.get('id')})")
-                    self.calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=ev['id']).execute()
-                    print(f"Successfully deleted existing event.")
+                
+                # 같은 날짜의 "투자일지" 이벤트 삭제
+                if ev_date == self.target_date.isoformat() and "투자일지" in ev_summary:
+                    try:
+                        self.calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=ev['id']).execute()
+                        print(f">>> 기존 이벤트 삭제: {ev_summary}")
+                        deleted_count += 1
+                    except Exception as del_e:
+                        print(f"Warning: 이벤트 삭제 실패: {del_e}")
+            
+            if deleted_count > 0:
+                print(f"✅ 기존 이벤트 {deleted_count}개 삭제 완료")
+            else:
+                print(f"ℹ️ 삭제할 기존 이벤트 없음")
+                
+        except Exception as e:
+            print(f"Warning: 기존 이벤트 검색 실패: {e}")
 
-            # 새 이벤트 생성 준비
+        # 새 이벤트 생성 준비
+        try:
             next_day = (self.target_date + datetime.timedelta(days=1)).isoformat()
             
             event = {
@@ -546,9 +687,9 @@ class StockDataUpdater:
                 'start': {'date': self.target_date.isoformat(), 'timeZone': 'Asia/Seoul'},
                 'end': {'date': next_day, 'timeZone': 'Asia/Seoul'},
             }
-            print(f"DEBUG: Inserting new event: {title} for date {self.target_date}")
+            print(f">>> 새 이벤트 생성 중: {title}")
             res = self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-            print(f"Successfully created calendar event! Link: {res.get('htmlLink')}")
+            print(f"✅ 캘린더 이벤트 생성 완료! Link: {res.get('htmlLink')}")
             
         except Exception as e:
             print(f"ERROR: Failed to update calendar event: {str(e)}")
