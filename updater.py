@@ -185,9 +185,9 @@ class StockDataUpdater:
                 now_str
             ])
         
-        # 시트 업데이트
+        # 시트 업데이트 (최신 gspread 규격: values, range_name 순서)
         ws.clear()
-        ws.update('A1', rows)
+        ws.update(rows, 'A1')
         
         # 서식 지정 (D: Price, F: Volume, G: MarketCap 우측 정렬)
         try:
@@ -299,7 +299,7 @@ class StockDataUpdater:
 
         if target_iso in all_dates:
             row_idx = all_dates.index(target_iso) + 1
-            ws_monthly.update(f'A{row_idx}:F{row_idx}', [row_data])
+            ws_monthly.update([row_data], f'A{row_idx}:F{row_idx}')
             print(f"Updated existing row for {target_iso}.")
         else:
             ws_monthly.append_row(row_data)
@@ -329,27 +329,31 @@ class StockDataUpdater:
         print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
 
     def create_calendar_event(self, title, description):
+        print(f"DEBUG: Attempting to update calendar. ID={CALENDAR_ID}")
+        if CALENDAR_ID == 'primary':
+            print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar, not yours. Ensure you set this to your email address in GitHub Secrets.")
+
         # 해당 날짜의 기존 이벤트 검색 및 삭제 (중복 방지)
-        # 검색 범위: 대상 날짜의 전일 15시(UTC) ~ 익일 15시(UTC)를 포함하도록 넉넉히 지정
         search_start = (self.target_date - datetime.timedelta(days=1)).isoformat() + "T00:00:00Z"
         search_end = (self.target_date + datetime.timedelta(days=2)).isoformat() + "T00:00:00Z"
         
         try:
+            print(f"DEBUG: Searching events between {search_start} and {search_end}")
             events_result = self.calendar_service.events().list(
                 calendarId=CALENDAR_ID, timeMin=search_start, timeMax=search_end,
                 singleEvents=True, orderBy='startTime'
             ).execute()
             events = events_result.get('items', [])
+            print(f"DEBUG: Found {len(events)} events in range.")
             
             for ev in events:
-                # 'date' 키가 있으면 All-day 이벤트
                 ev_date = ev.get('start', {}).get('date')
                 if ev_date == self.target_date.isoformat() and "투자일지" in ev.get('summary', ''):
+                    print(f"DEBUG: Found matching event to delete: {ev.get('summary')} (ID: {ev.get('id')})")
                     self.calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=ev['id']).execute()
-                    print(f"Deleted existing calendar event: {ev['summary']} on {ev_date}")
+                    print(f"Successfully deleted existing event.")
 
             # 새 이벤트 생성 준비
-            # All-day 이벤트는 종료일(end['date'])이 다음 날(exclusive)이어야 함
             next_day = (self.target_date + datetime.timedelta(days=1)).isoformat()
             
             event = {
@@ -358,10 +362,18 @@ class StockDataUpdater:
                 'start': {'date': self.target_date.isoformat(), 'timeZone': 'Asia/Seoul'},
                 'end': {'date': next_day, 'timeZone': 'Asia/Seoul'},
             }
-            self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-            print(f"Created new calendar event: {title} (Range: {self.target_date} ~ {next_day})")
+            print(f"DEBUG: Inserting new event: {title} for date {self.target_date}")
+            res = self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+            print(f"Successfully created calendar event! Link: {res.get('htmlLink')}")
+            
         except Exception as e:
-            print(f"Error updating calendar event: {e}")
+            print(f"ERROR: Failed to update calendar event: {str(e)}")
+            if "Not Found" in str(e) or "404" in str(e):
+                print(f"HINT: Calendar '{CALENDAR_ID}' not found.")
+                print("1. Check if CALENDAR_ID in GitHub Secrets is your EXACT email address.")
+                print("2. Ensure you have shared your Google Calendar with the Service Account email and granted 'Make changes to events' permission.")
+            elif "insufficientPermissions" in str(e):
+                print("HINT: Insufficient permissions. Make sure the service account has 'Make changes to events' access.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
