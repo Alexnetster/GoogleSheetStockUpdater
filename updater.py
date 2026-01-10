@@ -13,14 +13,12 @@ import time
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v1.1.0_20260110"
+VERSION = "v1.2.0_20260110"
 
-# GitHub Actions에서는 Secrets로 관리할 예정
+# 환경 변수 및 설정
 CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
-SPREADSHEET_ID = os.getenv('SPREADSHEET_ID') # "1K39pYj8UvHuyKhQA9MPianPlL6-JqMDZjTQEHKUnThg"
+SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 CALENDAR_ID = os.getenv('CALENDAR_ID', 'primary')
-
-# --- 데이터 수집 엔진 ---
 
 class StockDataUpdater:
     def __init__(self):
@@ -30,33 +28,6 @@ class StockDataUpdater:
         self.calendar_service = build('calendar', 'v3', credentials=self.creds)
         self.kr_name_map = self._get_kr_name_map()
 
-    def _get_kr_name_map(self):
-        """한국 거래소 종목 코드 - 이름 매핑 생성"""
-        try:
-            print("Fetching KRX listing for name mapping...")
-            df = fdr.StockListing('KRX')
-            return dict(zip(df['Code'], df['Name']))
-        except Exception as e:
-            print(f"Error fetching KRX listing: {e}")
-            return {}
-
-    def _format_large_number(self, n):
-        """큰 숫자를 K, M, B, T 단위로 변환"""
-        if n is None or pd.isna(n): return "-"
-        if n >= 1e12: return f"{n/1e12:.2f}T"
-        if n >= 1e9: return f"{n/1e9:.2f}B"
-        if n >= 1e6: return f"{n/1e6:.2f}M"
-        if n >= 1e3: return f"{n/1e3:.2f}K"
-        return str(int(n))
-
-    def _format_currency(self, n, asset_type):
-        """통화 형식에 맞춰 포맷팅 (천 단위 콤마)"""
-        if n is None or pd.isna(n): return "-"
-        if asset_type == 'KR':
-            return f"{int(n):,}"
-        else:
-            return f"{n:,.2f}"
-
     def _load_credentials(self):
         if CREDENTIALS_JSON:
             info = json.loads(CREDENTIALS_JSON)
@@ -65,248 +36,215 @@ class StockDataUpdater:
                 'https://www.googleapis.com/auth/calendar'
             ])
         else:
-            # 로컬 테스트용
             return Credentials.from_service_account_file('credentials.json', scopes=[
                 'https://www.googleapis.com/auth/spreadsheets',
                 'https://www.googleapis.com/auth/calendar'
             ])
 
-    def get_kr_stocks(self, tickers):
-        """한국 주식 데이터 수집"""
-        data = []
-        for ticker in tickers:
-            try:
-                # FinanceDataReader는 상장사 전체 리스트를 가져오기에 용이함
-                # 실시간 가격은 yfinance나 별도 크롤링이 필요할 수 있음
-                # 여기서는 간단히 yfinance (KRX 종목은 .KS 또는 .KQ) 사용
-                sym = f"{ticker}.KS" if len(ticker) == 6 else ticker
-                stock = yf.Ticker(sym)
-                info = stock.fast_info
-                hist = stock.history(period="2d")
-                
-                if len(hist) < 2: continue
-                
-                curr_price = hist['Close'].iloc[-1]
-                prev_price = hist['Close'].iloc[-2]
-                change = curr_price - prev_price
-                change_rate = (change / prev_price) * 100
-                volume = hist['Volume'].iloc[-1]
-                market_cap = stock.info.get('marketCap', 0)
-                
-                data.append({
-                    'Asset': 'KR',
-                    'Ticker': ticker,
-                    'Name': self.kr_name_map.get(ticker, ticker),
-                    'Price': self._format_currency(curr_price, 'KR'),
-                    'Change': round(change, 2),
-                    'ChangeRate': round(change_rate, 2),
-                    'Volume': self._format_large_number(volume),
-                    'MarketCap': self._format_large_number(market_cap),
-                    'Update': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                })
-            except Exception as e:
-                print(f"Error fetching KR stock {ticker}: {e}")
-        return data
+    def _get_kr_name_map(self):
+        try:
+            df = fdr.StockListing('KRX')
+            return dict(zip(df['Code'], df['Name']))
+        except Exception as e:
+            print(f"Error fetching KRX listing: {e}")
+            return {}
 
-    def get_us_stocks(self, tickers):
-        """미국 주식 데이터 수집"""
-        data = []
-        for ticker in tickers:
+    def _format_large_number(self, n):
+        if n is None or pd.isna(n): return "-"
+        if n >= 1e12: return f"{n/1e12:.2f}T"
+        if n >= 1e9: return f"{n/1e9:.2f}B"
+        if n >= 1e6: return f"{n/1e6:.2f}M"
+        if n >= 1e3: return f"{n/1e3:.2f}K"
+        return f"{int(n):,}"
+
+    def _format_price(self, n, asset_type):
+        if n is None or pd.isna(n): return "-"
+        if asset_type in ['KR', 'KRW']: return f"{int(n):,}"
+        return f"{n:,.2f}"
+
+    def get_market_indices(self):
+        """핵심 시장 지수 및 환율 수집"""
+        indices = {
+            '^KS11': 'KOSPI', '^KQ11': 'KOSDAQ', 
+            '^GSPC': 'S&P500', '^IXIC': 'NASDAQ',
+            'USDKRW=X': 'USD/KRW'
+        }
+        results = {}
+        for ticker, name in indices.items():
             try:
                 stock = yf.Ticker(ticker)
-                # 이름(name) 정보 추가 수집
-                name = stock.info.get('longName', ticker)
-                
                 hist = stock.history(period="2d")
                 if len(hist) < 2: continue
-                
-                curr_price = hist['Close'].iloc[-1]
-                prev_price = hist['Close'].iloc[-2]
-                change = curr_price - prev_price
-                change_rate = (change / prev_price) * 100
-                volume = hist['Volume'].iloc[-1]
-                market_cap = stock.info.get('marketCap', 0)
-                
-                data.append({
-                    'Asset': 'US',
-                    'Ticker': ticker,
-                    'Name': name,
-                    'Price': self._format_currency(curr_price, 'US'),
-                    'Change': round(change, 2),
-                    'ChangeRate': round(change_rate, 2),
-                    'Volume': self._format_large_number(volume),
-                    'MarketCap': self._format_large_number(market_cap),
-                    'Update': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                })
+                curr = hist['Close'].iloc[-1]
+                prev = hist['Close'].iloc[-2]
+                change = curr - prev
+                change_rate = (change / prev) * 100
+                results[name] = {
+                    'price': curr,
+                    'change': change,
+                    'rate': change_rate
+                }
             except Exception as e:
-                print(f"Error fetching US stock {ticker}: {e}")
-        return data
+                print(f"Error fetching index {name}: {e}")
+        return results
 
-    def get_crypto_data(self, tickers):
-        """코인 데이터 수집 (BTC-USD, ETH-USD 등)"""
+    def get_stock_data(self, tickers, asset_type):
+        """주식/코인 상세 데이터 수집 (거래량 분석 포함)"""
         data = []
         for ticker in tickers:
             try:
-                sym = f"{ticker}-USD"
-                stock = yf.Ticker(sym)
-                # 이름(name) 정보 추가 수집
-                name = stock.info.get('shortName', ticker) # 코인은 shortName이 더 깔끔할 수 있음
+                sym = ticker
+                if asset_type == 'KR':
+                    sym = f"{ticker}.KS" if len(ticker) == 6 else ticker
+                elif asset_type == 'Coin':
+                    sym = f"{ticker}-USD"
                 
-                hist = stock.history(period="2d")
+                stock = yf.Ticker(sym)
+                # 20일 평균 거래량 확인을 위해 1개월 데이터 수집
+                hist = stock.history(period="1mo")
                 if len(hist) < 2: continue
                 
-                curr_price = hist['Close'].iloc[-1]
-                prev_price = hist['Close'].iloc[-2]
-                change = curr_price - prev_price
-                change_rate = (change / prev_price) * 100
-                volume = hist['Volume'].iloc[-1]
-                market_cap = stock.info.get('marketCap', 0)
+                curr = hist.iloc[-1]
+                prev = hist.iloc[-2]
+                avg_vol = hist['Volume'].iloc[:-1].mean()
+                curr_vol = curr['Volume']
+                vol_spike = (curr_vol / avg_vol) if avg_vol > 0 else 0
                 
+                price = curr['Close']
+                change_rate = ((price - prev['Close']) / prev['Close']) * 100
+                
+                name = stock.info.get('longName') or stock.info.get('shortName') or ticker
+                if asset_type == 'KR': name = self.kr_name_map.get(ticker, name)
+
                 data.append({
-                    'Asset': 'Coin',
+                    'Asset': asset_type,
                     'Ticker': ticker,
                     'Name': name,
-                    'Price': self._format_currency(curr_price, 'Coin'),
-                    'Change': round(change, 2),
+                    'Price': price,
+                    'FormattedPrice': self._format_price(price, asset_type),
                     'ChangeRate': round(change_rate, 2),
-                    'Volume': self._format_large_number(volume),
-                    'MarketCap': self._format_large_number(market_cap),
-                    'Update': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    'Volume': curr_vol,
+                    'VolSpike': round(vol_spike, 2),
+                    'MarketCap': stock.info.get('marketCap', 0),
+                    'News': self._get_news_top1(stock, ticker, asset_type)
                 })
             except Exception as e:
-                print(f"Error fetching Crypto {ticker}: {e}")
+                print(f"Error fetching {asset_type} {ticker}: {e}")
         return data
 
-    def get_news(self, ticker, asset_type):
-        """종목 관련 뉴스 수집 (Naver/Yahoo Finance)"""
-        news_list = []
+    def _get_news_top1(self, stock_obj, ticker, asset_type):
         try:
             if asset_type == 'KR':
                 url = f"https://finance.naver.com/item/news_news.naver?code={ticker}"
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                resp = requests.get(url, headers=headers)
+                resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                titles = soup.select('.title a')
-                for t in titles[:3]: # 상위 3개
-                    link = "https://finance.naver.com" + t['href']
-                    news_list.append(f"{t.text.strip()} ({link})")
+                t = soup.select_one('.title a')
+                if t: return f"{t.text.strip()} (https://finance.naver.com{t['href']})"
             else:
-                stock = yf.Ticker(ticker)
-                for n in stock.news[:3]:
-                    news_list.append(f"{n['title']} ({n['link']})")
-        except Exception as e:
-            print(f"Error fetching news for {ticker}: {e}")
-        return "\n".join(news_list)
+                news = stock_obj.news
+                if news: return f"{news[0]['title']} ({news[0]['link']})"
+        except: pass
+        return "-"
 
-    def analyze_unusual_stocks(self, all_data):
-        """특이 종목 분석 및 기록 (상한가 15%, 거래량 등)"""
-        unusual_list = []
-        for item in all_data:
-            # 15% 이상 급등/급락 시 특이 종목으로 간주
-            if abs(item['ChangeRate']) >= 15.0:
-                news = self.get_news(item['Ticker'], item['Asset'])
-                unusual_item = {
-                    'Date': datetime.date.today().isoformat(),
-                    'Asset': item['Asset'],
-                    'Ticker': item['Ticker'],
-                    'Name': item['Name'],
-                    'ChangeRate': item['ChangeRate'],
-                    'News': news
-                }
-                unusual_list.append(unusual_item)
+    def get_watchlist(self):
+        """관심종목 탭에서 리스트 읽기"""
+        try:
+            ws = self.sh.worksheet('관심종목_관리')
+            records = ws.get_all_records()
+            return records
+        except:
+            print("Watchlist sheet not found. Creating one...")
+            ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
+            ws.append_row(['Ticker', 'Name', 'Asset', 'Memo', 'Alert_Price'])
+            return []
+
+    def get_monthly_worksheet(self):
+        """월별 탭 관리 및 반환"""
+        tab_name = datetime.date.today().strftime('%Y-%m')
+        try:
+            return self.sh.worksheet(tab_name)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = self.sh.add_worksheet(title=tab_name, rows=1000, cols=15)
+            ws.append_row(['Date', 'Market Summary', 'Indices Info', 'Watchlist Status', 'Unusual Stocks', 'Version'])
+            return ws
+
+    def process_and_report(self):
+        print("1. 수집 중: 시장 지표...")
+        indices = self.get_market_indices()
         
-        if unusual_list:
-            try:
-                ws = self.sh.worksheet('특이종목_테마')
-                df = pd.DataFrame(unusual_list)
-                ws.append_rows(df.values.tolist())
-                print(f"Added {len(unusual_list)} unusual stocks.")
-            except Exception as e:
-                print(f"Error updating unusual stocks: {e}")
-        return unusual_list
+        print("2. 수집 중: 관심종목...")
+        watchlist_raw = self.get_watchlist()
+        watch_data = []
+        for item in watchlist_raw:
+            if not item.get('Ticker'): continue
+            res = self.get_stock_data([str(item['Ticker'])], item.get('Asset', 'US'))
+            if res:
+                res[0]['Memo'] = item.get('Memo', '')
+                watch_data.append(res[0])
 
-    def update_global_data(self, all_data):
-        """글로벌데이터 시트 업데이트 (Overwrite)"""
-        try:
-            ws = self.sh.worksheet('글로벌데이터')
-            ws.clear()
-            # 헤더 순서 고정
-            df = pd.DataFrame(all_data)
-            df = df[['Asset', 'Ticker', 'Name', 'Price', 'Change', 'ChangeRate', 'Volume', 'MarketCap', 'Update']]
-            
-            # 상단에 프로그램 정보 추가
-            info_row = [f"{APP_NAME} {VERSION}", "", "", "", "", "", "", "", datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
-            ws.update([info_row, df.columns.values.tolist()] + df.values.tolist())
-            print(f"Global data updated successfully by {APP_NAME} {VERSION}.")
-        except Exception as e:
-            print(f"Error updating global data: {e}")
+        print("3. 수집 중: 주요 마켓 데이터...")
+        # 기존 샘플 리스트 (실제로는 다른 시트에서 관리 가능)
+        sample_kr = ['005930', '000660', '035720']
+        sample_us = ['AAPL', 'TSLA', 'NVDA']
+        market_all = self.get_stock_data(sample_kr, 'KR') + self.get_stock_data(sample_us, 'US')
 
-    def append_daily_history(self, summary_text):
-        """일별기록 시트 추가 (Append)"""
-        try:
-            ws = self.sh.worksheet('일별기록')
-            row = [datetime.date.today().isoformat(), summary_text, f"{APP_NAME} {VERSION}"]
-            ws.append_row(row)
-        except Exception as e:
-            print(f"Error appending daily history: {e}")
+        # 분석: 특이종목 (변동성 15% 이상 OR 거래량 3배 이상)
+        unusual = [d for d in market_all if abs(d['ChangeRate']) >= 15.0 or d['VolSpike'] >= 3.0]
+
+        # 요약 텍스트 생성
+        idx_summary = " / ".join([f"{k}: {v['price']:,.1f}({v['rate']:+.2f}%)" for k, v in indices.items()])
+        
+        watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
+        unusual_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}% / 거래량 {d['VolSpike']}배): {d['News']}" for d in unusual])
+
+        # 시트 기록
+        print("4. 기록 중: 월별 일지...")
+        ws_monthly = self.get_monthly_worksheet()
+        ws_monthly.append_row([
+            datetime.date.today().isoformat(),
+            f"KR:{indices.get('KOSPI', {}).get('rate', 0):+.2f}%, US:{indices.get('S&P500', {}).get('rate', 0):+.2f}%",
+            idx_summary,
+            watch_summary if watch_summary else "N/A",
+            unusual_summary if unusual_summary else "N/A",
+            f"{APP_NAME} {VERSION}"
+        ])
+
+        # 캘린더 생성
+        print("5. 연동 중: 구글 캘린더...")
+        cal_title = f"[투자일지] KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}% / S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
+        cal_desc = f"""## ⭐ 관심종목 브리핑
+{watch_summary if watch_summary else "등록된 관심종목이 없습니다."}
+
+## 📈 핵심 시장 지표
+- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%) / KOSDAQ {indices.get('KOSDAQ',{}).get('price',0):,.1f} ({indices.get('KOSDAQ',{}).get('rate',0):+.2f}%)
+- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%) / NASDAQ {indices.get('NASDAQ',{}).get('price',0):,.1f} ({indices.get('NASDAQ',{}).get('rate',0):+.2f}%)
+- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f} (전일대비 {indices.get('USD/KRW',{}).get('change',0):+.1f}원)
+
+## 🔥 실시간 특이종목 (거래량/변동성)
+{unusual_summary if unusual_summary else "오늘의 특이종목이 없습니다."}
+
+## 🔗 상세 내용 보기
+[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})
+"""
+        self.create_calendar_event(cal_title, cal_desc)
+        print("모든 작업이 완료되었습니다.")
 
     def create_calendar_event(self, title, description):
-        """구글 캘린더 이벤트 생성"""
         event = {
             'summary': title,
             'description': description,
-            'start': {
-                'date': datetime.date.today().isoformat(),
-                'timeZone': 'Asia/Seoul',
-            },
-            'end': {
-                'date': datetime.date.today().isoformat(),
-                'timeZone': 'Asia/Seoul',
-            },
+            'start': {'date': datetime.date.today().isoformat(), 'timeZone': 'Asia/Seoul'},
+            'end': {'date': datetime.date.today().isoformat(), 'timeZone': 'Asia/Seoul'},
         }
         try:
             self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-            print("Calendar event created.")
         except Exception as e:
             print(f"Error creating calendar event: {e}")
 
-# --- 실행 로직 ---
 if __name__ == "__main__":
-    # 필수 환경 변수 체크
     if not SPREADSHEET_ID:
         print("ERROR: SPREADSHEET_ID is missing.")
         exit(1)
-
+    
     updater = StockDataUpdater()
-    
-    # 예시 티커 (실제 상용 시에는 시트에서 읽어오거나 확장 가능)
-    kr_list = ['005930', '000660', '035720', '035420'] 
-    us_list = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'GOOGL']
-    coin_list = ['BTC', 'ETH', 'XRP', 'SOL']
-    
-    # 1. 데이터 수집
-    print("Collecting data...")
-    kr_data = updater.get_kr_stocks(kr_list)
-    us_data = updater.get_us_stocks(us_list)
-    coin_data = updater.get_crypto_data(coin_list)
-    
-    all_data = kr_data + us_data + coin_data
-    
-    # 2. 글로벌데이터 시트 갱신
-    updater.update_global_data(all_data)
-    
-    # 3. 특이 종목 분석 및 뉴스 수집
-    print("Analyzing unusual stocks...")
-    unusual_stocks = updater.analyze_unusual_stocks(all_data)
-    
-    # 4. 일별 요약 및 캘린더 연동
-    unusual_summary = "\n".join([f"- {s['Name']} ({s['ChangeRate']}%): {s['News'][:50]}..." for s in unusual_stocks])
-    market_summary = f"KR: {len(kr_data)}, US: {len(us_data)}, Coin: {len(coin_data)}"
-    full_summary = f"{market_summary}\n\n[Unusual Stocks]\n{unusual_summary}"
-    
-    updater.append_daily_history(full_summary)
-    
-    cal_title = f"[Stock Summary] Market: {market_summary}"
-    updater.create_calendar_event(cal_title, full_summary)
-    
-    print("All processes completed.")
+    updater.process_and_report()
