@@ -253,8 +253,8 @@ class StockDataUpdater:
                 watch_data.append(res[0])
 
         print("3. 수집 중: 주요 마켓 데이터...")
-        sample_kr = ['005930', '000660', '035720']
-        sample_us = ['AAPL', 'TSLA', 'NVDA']
+        sample_kr = ['005930', '000660', '005380', '035420'] # 삼성전자, SK하이닉스, 현대차, NAVER
+        sample_us = ['AAPL', 'TSLA', 'NVDA', 'MSFT'] # 애플, 테슬라, 엔비디아, 마이크로소프트
         market_all = self.get_stock_data(sample_kr, 'KR') + self.get_stock_data(sample_us, 'US')
 
         print("3.5. 갱신 중: 글로벌데이터 시트...")
@@ -262,8 +262,13 @@ class StockDataUpdater:
 
         unusual = [d for d in market_all if abs(d['ChangeRate']) >= 15.0 or d['VolSpike'] >= 3.0]
 
+        # 요약 생성
         idx_summary = " / ".join([f"{k}: {v['price']:,.1f}({v['rate']:+.2f}%)" for k, v in indices.items()])
         watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
+        
+        # 주요 종목 요약 (모든 샘플 종목 표시)
+        major_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in market_all])
+        # 특이 종목 요약
         unusual_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}% / 거래량 {d['VolSpike']}배): {d['News']}" for d in unusual])
 
         print("4. 기록 중: 월별 일지 (중복 체크 포함)...")
@@ -271,12 +276,15 @@ class StockDataUpdater:
         all_dates = ws_monthly.col_values(1)
         target_iso = self.target_date.isoformat()
         
+        # 시트에는 주요 종목과 특이 종목을 합쳐서 기록
+        detailed_market_info = f"[주요종목]\n{major_summary}\n\n[특이종목]\n{unusual_summary if unusual_summary else '없음'}"
+
         row_data = [
             target_iso,
             f"KR:{indices.get('KOSPI', {}).get('rate', 0):+.2f}%, US:{indices.get('S&P500', {}).get('rate', 0):+.2f}%",
             idx_summary,
             watch_summary if watch_summary else "N/A",
-            unusual_summary if unusual_summary else "N/A",
+            detailed_market_info,
             f"{APP_NAME} {VERSION}"
         ]
 
@@ -298,6 +306,9 @@ class StockDataUpdater:
 - 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%) / KOSDAQ {indices.get('KOSDAQ',{}).get('price',0):,.1f} ({indices.get('KOSDAQ',{}).get('rate',0):+.2f}%)
 - 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%) / NASDAQ {indices.get('NASDAQ',{}).get('price',0):,.1f} ({indices.get('NASDAQ',{}).get('rate',0):+.2f}%)
 - 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f} (전일대비 {indices.get('USD/KRW',{}).get('change',0):+.1f}원)
+
+## 🏢 주요 종목 현황 (Market Leaders)
+{major_summary}
 
 ## 🔥 실시간 특이종목 (거래량/변동성)
 {unusual_summary if unusual_summary else "오늘의 특이종목이 없습니다."}
