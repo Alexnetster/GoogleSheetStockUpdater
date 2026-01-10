@@ -12,6 +12,9 @@ import json
 import time
 
 # --- 설정 및 상수 ---
+APP_NAME = "DailyStockUpdater"
+VERSION = "v1.1.0_20260110"
+
 # GitHub Actions에서는 Secrets로 관리할 예정
 CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID') # "1K39pYj8UvHuyKhQA9MPianPlL6-JqMDZjTQEHKUnThg"
@@ -25,6 +28,34 @@ class StockDataUpdater:
         self.gc = gspread.authorize(self.creds)
         self.sh = self.gc.open_by_key(SPREADSHEET_ID)
         self.calendar_service = build('calendar', 'v3', credentials=self.creds)
+        self.kr_name_map = self._get_kr_name_map()
+
+    def _get_kr_name_map(self):
+        """한국 거래소 종목 코드 - 이름 매핑 생성"""
+        try:
+            print("Fetching KRX listing for name mapping...")
+            df = fdr.StockListing('KRX')
+            return dict(zip(df['Code'], df['Name']))
+        except Exception as e:
+            print(f"Error fetching KRX listing: {e}")
+            return {}
+
+    def _format_large_number(self, n):
+        """큰 숫자를 K, M, B, T 단위로 변환"""
+        if n is None or pd.isna(n): return "-"
+        if n >= 1e12: return f"{n/1e12:.2f}T"
+        if n >= 1e9: return f"{n/1e9:.2f}B"
+        if n >= 1e6: return f"{n/1e6:.2f}M"
+        if n >= 1e3: return f"{n/1e3:.2f}K"
+        return str(int(n))
+
+    def _format_currency(self, n, asset_type):
+        """통화 형식에 맞춰 포맷팅 (천 단위 콤마)"""
+        if n is None or pd.isna(n): return "-"
+        if asset_type == 'KR':
+            return f"{int(n):,}"
+        else:
+            return f"{n:,.2f}"
 
     def _load_credentials(self):
         if CREDENTIALS_JSON:
@@ -59,15 +90,18 @@ class StockDataUpdater:
                 prev_price = hist['Close'].iloc[-2]
                 change = curr_price - prev_price
                 change_rate = (change / prev_price) * 100
+                volume = hist['Volume'].iloc[-1]
+                market_cap = stock.info.get('marketCap', 0)
                 
                 data.append({
                     'Asset': 'KR',
                     'Ticker': ticker,
-                    'Name': ticker, # 실제 이름은 별도 매핑 필요
-                    'Price': round(curr_price, 2),
+                    'Name': self.kr_name_map.get(ticker, ticker),
+                    'Price': self._format_currency(curr_price, 'KR'),
                     'Change': round(change, 2),
                     'ChangeRate': round(change_rate, 2),
-                    'Volume': hist['Volume'].iloc[-1],
+                    'Volume': self._format_large_number(volume),
+                    'MarketCap': self._format_large_number(market_cap),
                     'Update': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
             except Exception as e:
@@ -80,6 +114,9 @@ class StockDataUpdater:
         for ticker in tickers:
             try:
                 stock = yf.Ticker(ticker)
+                # 이름(name) 정보 추가 수집
+                name = stock.info.get('longName', ticker)
+                
                 hist = stock.history(period="2d")
                 if len(hist) < 2: continue
                 
@@ -87,15 +124,18 @@ class StockDataUpdater:
                 prev_price = hist['Close'].iloc[-2]
                 change = curr_price - prev_price
                 change_rate = (change / prev_price) * 100
+                volume = hist['Volume'].iloc[-1]
+                market_cap = stock.info.get('marketCap', 0)
                 
                 data.append({
                     'Asset': 'US',
                     'Ticker': ticker,
-                    'Name': ticker,
-                    'Price': round(curr_price, 2),
+                    'Name': name,
+                    'Price': self._format_currency(curr_price, 'US'),
                     'Change': round(change, 2),
                     'ChangeRate': round(change_rate, 2),
-                    'Volume': hist['Volume'].iloc[-1],
+                    'Volume': self._format_large_number(volume),
+                    'MarketCap': self._format_large_number(market_cap),
                     'Update': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
             except Exception as e:
@@ -109,6 +149,9 @@ class StockDataUpdater:
             try:
                 sym = f"{ticker}-USD"
                 stock = yf.Ticker(sym)
+                # 이름(name) 정보 추가 수집
+                name = stock.info.get('shortName', ticker) # 코인은 shortName이 더 깔끔할 수 있음
+                
                 hist = stock.history(period="2d")
                 if len(hist) < 2: continue
                 
@@ -116,15 +159,18 @@ class StockDataUpdater:
                 prev_price = hist['Close'].iloc[-2]
                 change = curr_price - prev_price
                 change_rate = (change / prev_price) * 100
+                volume = hist['Volume'].iloc[-1]
+                market_cap = stock.info.get('marketCap', 0)
                 
                 data.append({
                     'Asset': 'Coin',
                     'Ticker': ticker,
-                    'Name': ticker,
-                    'Price': round(curr_price, 2),
+                    'Name': name,
+                    'Price': self._format_currency(curr_price, 'Coin'),
                     'Change': round(change, 2),
                     'ChangeRate': round(change_rate, 2),
-                    'Volume': hist['Volume'].iloc[-1],
+                    'Volume': self._format_large_number(volume),
+                    'MarketCap': self._format_large_number(market_cap),
                     'Update': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 })
             except Exception as e:
@@ -186,9 +232,12 @@ class StockDataUpdater:
             ws.clear()
             # 헤더 순서 고정
             df = pd.DataFrame(all_data)
-            df = df[['Asset', 'Ticker', 'Name', 'Price', 'Change', 'ChangeRate', 'Volume', 'Update']]
-            ws.update([df.columns.values.tolist()] + df.values.tolist())
-            print("Global data updated successfully.")
+            df = df[['Asset', 'Ticker', 'Name', 'Price', 'Change', 'ChangeRate', 'Volume', 'MarketCap', 'Update']]
+            
+            # 상단에 프로그램 정보 추가
+            info_row = [f"{APP_NAME} {VERSION}", "", "", "", "", "", "", "", datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')]
+            ws.update([info_row, df.columns.values.tolist()] + df.values.tolist())
+            print(f"Global data updated successfully by {APP_NAME} {VERSION}.")
         except Exception as e:
             print(f"Error updating global data: {e}")
 
@@ -196,7 +245,7 @@ class StockDataUpdater:
         """일별기록 시트 추가 (Append)"""
         try:
             ws = self.sh.worksheet('일별기록')
-            row = [datetime.date.today().isoformat(), summary_text]
+            row = [datetime.date.today().isoformat(), summary_text, f"{APP_NAME} {VERSION}"]
             ws.append_row(row)
         except Exception as e:
             print(f"Error appending daily history: {e}")
