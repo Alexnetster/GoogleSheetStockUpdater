@@ -649,43 +649,10 @@ class StockDataUpdater:
             cal_desc_parts.append("")
         
         
-        # 주요 종목 (주식이 있으면 표시)
-        stock_data = [d for d in market_all if d.get('Asset') in ['KR', 'US']]
-        if stock_data:
-            cal_desc_parts.append("## 🏢 주요 종목 현황")
-            cal_desc_parts.append(major_summary)
-            cal_desc_parts.append("")
-        
-        # 특이종목 (네이버 우선 표시)
-        if unusual:
-            cal_desc_parts.append("## 🔥 실시간 특이종목")
-            cal_desc_parts.append("")
-            
-            # 1. 네이버 증권 (시장 주목) - 가격 정보가 있는 것만 표시
-            naver_stocks_cal = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
-            if naver_stocks_cal:
-                cal_desc_parts.append("### 📰 네이버 증권 (시장 주목)")
-                for d in naver_stocks_cal[:8]:  # 최대 8개
-                    category = d.get('Category', '기타')
-                    cal_desc_parts.append(f"- [{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-                cal_desc_parts.append("")
-            
-            # 2. 자체 분석 (완화 기준) - 가격 정보가 있는 것만 표시
-            internal_stocks_cal = [d for d in unusual if d.get('Source') == 'Internal' and d.get('Price', 0) > 0]
-            if internal_stocks_cal:
-                cal_desc_parts.append("### 📊 자체 분석 (완화 기준)")
-                for d in internal_stocks_cal[:5]:  # 최대 5개
-                    reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
-                    cal_desc_parts.append(f"- [{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-                cal_desc_parts.append("")
-
-        
-        # 코인 (항상 표시)
-        coin_data = [d for d in market_all if d.get('Asset') == 'Coin']
-        if coin_data:
-            cal_desc_parts.append("## 🪙 코인 시장 (24/7 거래)")
-            coin_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in coin_data])
-            cal_desc_parts.append(coin_summary)
+        # 시장 상세 리포트 (주요종목 + 특이종목 통합)
+        if unusual_summary != "N/A":
+            cal_desc_parts.append("## 📊 시장 상세 리포트")
+            cal_desc_parts.append(unusual_summary)
             cal_desc_parts.append("")
         
         # 링크
