@@ -392,21 +392,36 @@ class StockDataUpdater:
         print("3.5. 갱신 중: 글로벌데이터 시트...")
         self.update_global_data(market_all, indices)
 
-        print("4. 수집 중: 특이종목 (네이버 증권 + 자체 분석)...")
+        print("4. 수집 중: 특이종목 (네이버 증권 + FDR 전수 조사 + 자체 분석)...")
         
-        # 4-1. 네이버 증권 스크래핑 (한국 시장 개장 시만)
+        # 4-1. 네이버 증권 스크래핑 (실시간/핫 종목)
         naver_unusual = []
-        if is_kr_open and SCRAPER_AVAILABLE:
+        if SCRAPER_AVAILABLE:
             try:
-                print(">>> 네이버 증권 스크래핑 중...")
-                naver_unusual.extend(scrape_volume_surge(max_items=10))
-                naver_unusual.extend(scrape_price_limit(max_items=10))
+                # 한국 시장 전수 조사 (FDR 사용)
+                # 상한가 전수 조사 및 고거래량(500만 이상) 종목 추출
+                from scraper import analyze_market_fdr
+                print(">>> 시장 전수 조사 중 (FDR)...")
+                fdr_res = analyze_market_fdr(min_volume=5000000)
+                
+                # FDR 결과 병합
+                naver_unusual.extend(fdr_res['upper'])
+                naver_unusual.extend(fdr_res['volume'])
+                
+                # 네이버 실시간 스크래핑 (외국인 순매수 등은 네이버가 정확)
+                print(">>> 네이버 실시간 스크래핑 중...")
                 naver_unusual.extend(scrape_foreign_buy(max_items=10))
-                print(f">>> 네이버 증권: {len(naver_unusual)}개 종목 수집 완료")
+                
+                # 장중이라면 실시간 거래량/상한가도 보조적으로 수집
+                if is_kr_open:
+                    naver_unusual.extend(scrape_volume_surge(max_items=5))
+                    naver_unusual.extend(scrape_price_limit(max_items=5))
+                    
+                print(f text=f">>> 수집 완료: 전수조사 및 스크래핑 총 {len(naver_unusual)}개")
             except Exception as e:
-                print(f"Warning: 네이버 증권 스크래핑 실패: {e}")
+                print(f"Warning: 스크래핑/전수조사 중 실패: {e}")
         
-        # 4-2. 자체 분석 (완화된 기준)
+        # 4-2. 자체 분석 (보유 종목/관심 종목 대상 완화된 기준)
         internal_unusual = [
             d for d in market_all 
             if (abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE or d.get('VolSpike', 0) >= UNUSUAL_VOL_SPIKE)
@@ -418,7 +433,7 @@ class StockDataUpdater:
         
         print(f">>> 자체 분석: {len(internal_unusual)}개 종목 추출 완료")
         
-        # 4-3. 데이터 병합 및 중복 제거 (네이버 우선)
+        # 4-3. 데이터 병합 및 중복 제거 (네이버/FDR 우선)
         all_unusual = naver_unusual + internal_unusual
         seen = set()
         unusual = []
@@ -427,7 +442,7 @@ class StockDataUpdater:
                 unusual.append(d)
                 seen.add(d['Ticker'])
         
-        print(f">>> 최종 특이종목: {len(unusual)}개 (네이버 {len(naver_unusual)}개 + 자체 {len(internal_unusual) - (len(all_unusual) - len(unusual))}개)")
+        print(f">>> 최종 특이종목: {len(unusual)}개 (외부수집 {len(naver_unusual)}개 + 자체 {len(unusual) - len(naver_unusual)}개)")
 
 
         # 요약 생성 - Market Summary (여러 줄 형식)
