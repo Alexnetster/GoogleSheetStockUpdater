@@ -397,26 +397,6 @@ class StockDataUpdater:
 
         print(f">>> Final Effective Date: {self.target_date}")
         
-        print("2. 수집 중: 관심종목...")
-        watchlist_raw = self.get_watchlist()
-        watch_data = []
-        for item in watchlist_raw:
-            ticker = str(item.get('Ticker', ''))
-            if not ticker: continue
-            
-            asset_type = item.get('Asset', 'US')
-            res = self.get_stock_data([ticker], asset_type)
-            if res:
-                # 시트의 사용자 메모 및 의견 병합
-                res[0]['Memo'] = item.get('Memo', '')
-                res[0]['ExpertOpinion_User'] = item.get('Expert_Opinion', '')
-                
-                # 리포트용 요약 문구 생성 (시트 데이터 기반 추천 vs 시스템 자동 추천)
-                final_rec = item.get('Recommendation', res[0].get('Recommendation', '-'))
-                res[0]['FinalRecommendation'] = final_rec
-                
-                watch_data.append(res[0])
-
         # 실제 데이터 존재 여부로 시장 개장 여부 판단
         kospi_date = indices.get('KOSPI', {}).get('date')
         sp500_date = indices.get('S&P500', {}).get('date')
@@ -432,6 +412,31 @@ class StockDataUpdater:
                 print(">>> NXT Active Session detected (08:00-20:00 KST)")
 
         print(f">>> 시장 개장 상태: 한국={is_kr_open}, 미국={is_us_open}")
+
+        print("2. 수집 중: 관심종목 (개장된 시장만)...")
+        watchlist_raw = self.get_watchlist()
+        watch_data = []
+        for item in watchlist_raw:
+            ticker = str(item.get('Ticker', ''))
+            if not ticker: continue
+            
+            asset_type = item.get('Asset', 'US')
+            
+            # 시장 개장 상태에 따른 필터링 (코인은 항상 수집)
+            if asset_type == 'KR' and not is_kr_open: continue
+            if asset_type == 'US' and not is_us_open: continue
+            
+            res = self.get_stock_data([ticker], asset_type)
+            if res:
+                # 시트의 사용자 메모 및 의견 병합
+                res[0]['Memo'] = item.get('Memo', '')
+                res[0]['ExpertOpinion_User'] = item.get('Expert_Opinion', '')
+                
+                # 리포트용 요약 문구 생성 (시트 데이터 기반 추천 vs 시스템 자동 추천)
+                final_rec = item.get('Recommendation', res[0].get('Recommendation', '-'))
+                res[0]['FinalRecommendation'] = final_rec
+                
+                watch_data.append(res[0])
         
         print("3. 수집 중: 주요 마켓 데이터...")
         market_all = []
@@ -521,13 +526,21 @@ class StockDataUpdater:
         market_summary_lines.append(f"환율: USD/KRW {indices.get('USD/KRW', {}).get('change', 0):+.1f}원")
         market_summary = "\n".join(market_summary_lines)
         
-        # 관심종목 요약 (추천 정보 포함)
+        # 관심종목 요약 (추천 정보 포함 및 형식 지정)
         watch_summary_lines = []
         for d in watch_data:
+            # 국가별 명칭 형식 지정 (KR:이름 / US:[Ticker])
+            if d['Asset'] == 'KR':
+                display_name = f"KR:{d['Name']}"
+            elif d['Asset'] == 'US':
+                display_name = f"US:[{d['Ticker']}]"
+            else:
+                display_name = f"[{d['Ticker']}] {d['Name']}"
+
             rec_part = f" [{d['FinalRecommendation']}]" if d['FinalRecommendation'] != "-" else ""
             memo_part = f": {d['Memo']}" if d['Memo'] else ""
             user_opinion = f" (의견: {d['ExpertOpinion_User']})" if d['ExpertOpinion_User'] else ""
-            watch_summary_lines.append(f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%){rec_part}{memo_part}{user_opinion}")
+            watch_summary_lines.append(f"- {display_name} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%){rec_part}{memo_part}{user_opinion}")
         
         watch_summary = "\n".join(watch_summary_lines)
         
