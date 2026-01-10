@@ -99,8 +99,8 @@ Asset | Ticker | Name | Price | ChangeRate | Volume | MarketCap | Update
 ### 월별 일지 (YYYY-MM 탭)
 
 ```
-Date       | Market Summary        | Indices Info      | Watchlist Status | Unusual Stocks | Version
-2026-01-09 | KR: KOSPI +0.75%...  | KOSPI: 4,586.3... | N/A              | [주요종목]...  | v1.3.0
+Date       | Market Summary        | Watchlist Status | Unusual Stocks | Version
+2026-01-09 | KR: KOSPI +0.75%...  | N/A              | [주요종목]...  | v1.4.0
 ```
 
 ## 🔄 자동 실행 스케줄
@@ -149,12 +149,22 @@ GoogleSheetStockUpdater/
   - 캘린더 제목: `[날짜] 📅 주말 (주식 시장 휴장)`
   - 주식 시장 휴장 안내 포함
 
+### 시트 구조 관리
+
+- **새 월별 탭**: 최신 구조로 자동 생성
+- **기존 탭**: 구조 변경은 사용자가 수동으로 수행
+- **데이터 업데이트**: 프로그램이 자동으로 처리
+
+> 💡 **참고**: 기존 시트의 구조를 변경하려면 구글 시트에서 직접 컬럼을 추가/삭제하세요. 프로그램은 데이터만 업데이트합니다.
+
 ## 📝 버전 히스토리
 
 - **v1.4.0** (2026-01-10):
   - 주말/휴장일 자동 감지 기능 추가
   - 주말에는 코인 데이터만 수집
   - 캘린더 이벤트 주말 전용 형식 추가
+  - 월별 시트 Indices Info 컬럼 제거 (중복 제거)
+  - 새 월별 탭 생성 시 최신 구조 자동 적용
 
 - **v1.3.0** (2026-01-10):
   - 글로벌데이터 시트에 시장 현황 요약 추가

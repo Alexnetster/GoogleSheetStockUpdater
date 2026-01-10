@@ -253,8 +253,10 @@ class StockDataUpdater:
         try:
             return self.sh.worksheet(tab_name)
         except gspread.exceptions.WorksheetNotFound:
+            # 새 시트 생성 시에만 최신 구조 적용
             ws = self.sh.add_worksheet(title=tab_name, rows=1000, cols=15)
-            ws.append_row(['Date', 'Market Summary', 'Indices Info', 'Watchlist Status', 'Unusual Stocks', 'Version'])
+            ws.append_row(['Date', 'Market Summary', 'Watchlist Status', 'Unusual Stocks', 'Version'])
+            print(f"✅ 새 월별 시트 생성: {tab_name}")
             return ws
 
     def process_and_report(self, manual_date=False):
@@ -315,12 +317,6 @@ class StockDataUpdater:
         market_summary_lines.append(f"환율: USD/KRW {indices.get('USD/KRW', {}).get('change', 0):+.1f}원")
         market_summary = "\n".join(market_summary_lines)
         
-        # Indices Info (여러 줄 형식)
-        idx_summary_lines = []
-        for k, v in indices.items():
-            idx_summary_lines.append(f"{k}: {v['price']:,.1f} ({v['rate']:+.2f}%)")
-        idx_summary = "\n".join(idx_summary_lines)
-        
         watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
         
         # 주요 종목 요약 (모든 샘플 종목 표시)
@@ -339,7 +335,6 @@ class StockDataUpdater:
         row_data = [
             target_iso,
             market_summary,
-            idx_summary,
             watch_summary if watch_summary else "N/A",
             detailed_market_info,
             f"{APP_NAME} {VERSION}"
@@ -348,7 +343,7 @@ class StockDataUpdater:
 
         if target_iso in all_dates:
             row_idx = all_dates.index(target_iso) + 1
-            ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:F{row_idx}')
+            ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
             print(f"Updated existing row for {target_iso}.")
         else:
             ws_monthly.append_row(row_data)
