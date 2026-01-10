@@ -89,8 +89,9 @@ class StockDataUpdater:
 
     def _format_price(self, n, asset_type):
         if n is None or pd.isna(n): return "-"
-        if asset_type in ['KR', 'KRW']: return f"{int(n):,}"
-        return f"{n:,.2f}"
+        if asset_type in ['KR', 'KRW']: 
+            return f"₩{int(n):,}"
+        return f"${n:,.2f}"
 
     def get_market_indices(self):
         """핵심 시장 지수 및 환율 수집 (대상 날짜 기준)"""
@@ -248,13 +249,13 @@ class StockDataUpdater:
             
             rows.append([])
         
-        # 주요 종목 데이터 섹션 (그룹화 표시 - 통일된 형식)
-        asset_info = {'KR': ('한국', '📈'), 'US': ('미국', '📈'), 'Coin': ('코인', '📈')}
-        for asset_code, (asset_name, emoji) in asset_info.items():
+        # 주요 종목 데이터 섹션 (그룹화 표시 - 최종 구조)
+        asset_info = {'KR': '한국', 'US': '미국', 'Coin': '코인'}
+        for asset_code, asset_name in asset_info.items():
             asset_data = [d for d in data if d['Asset'] == asset_code]
             if not asset_data: continue
             
-            rows.append([f'=== [주요종목:{asset_name}] {emoji} ===', '', '', '', '', '', ''])
+            rows.append([f'=== [주요종목:{asset_name}] ===', '', '', '', '', '', ''])
             header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap']
             rows.append(header)
             
@@ -476,15 +477,9 @@ class StockDataUpdater:
         
         watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
         
-        # 주요 종목 요약 (모든 샘플 종목 중 가격 정보가 유효한 것만 표시)
-        major_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in market_all if d.get('Price', 0) > 0])
-        
-        # 특이종목 요약 - 리포트 형식 개편 (주요종목 포함)
-        unusual_summary_lines = []
-        
         # 1. [주요종목] 섹션 세분화 (개장한 시장 또는 코인 위주)
-        asset_types = [('KR', '한국', '📈'), ('US', '미국', '📈'), ('Coin', '코인', '📈')]
-        for a_code, a_name, a_emoji in asset_types:
+        asset_types = [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]
+        for a_code, a_name in asset_types:
             subset = []
             for d in market_all:
                 if d.get('Price', 0) <= 0: continue
@@ -494,28 +489,38 @@ class StockDataUpdater:
                 subset.append(d)
                 
             if subset:
-                unusual_summary_lines.append(f"[주요종목:{a_name}] {a_emoji}")
+                unusual_summary_lines.append(f"[주요종목:{a_name}]")
                 for d in subset:
                     unusual_summary_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
                 unusual_summary_lines.append("")
 
-        # 2. [특이종목:네이버증권] 📰 (시장 주목)
+        # 2. [특이종목:네이버증권]
         if unusual:
-            naver_stocks = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
-            if naver_stocks:
-                unusual_summary_lines.append("[특이종목:네이버증권] 📰 (시장 주목)")
-                for d in naver_stocks[:10]:  # 최대 10개
-                    category = d.get('Category', '기타')
-                    unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+            naver_total = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
+            if naver_total:
+                unusual_summary_lines.append("[특이종목:네이버증권]")
+                for region in ['한국', '미국']:
+                    asset_prefix = 'KR' if region == '한국' else 'US'
+                    region_stocks = [d for d in naver_total if d.get('Asset') == asset_prefix]
+                    if region_stocks:
+                        unusual_summary_lines.append(f"<{region}>")
+                        for d in region_stocks[:10]:
+                            category = d.get('Category', '기타')
+                            unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
                 unusual_summary_lines.append("")
             
-            # 3. [특이종목:자체분석] 📊 (완화 기준)
-            internal_stocks = [d for d in unusual if d.get('Source') == 'Internal' and d.get('Price', 0) > 0]
-            if internal_stocks:
-                unusual_summary_lines.append("[특이종목:자체분석] 📊 (완화 기준)")
-                for d in internal_stocks[:5]:  # 최대 5개
-                    reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
-                    unusual_summary_lines.append(f"[{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+            # 3. [특이종목:자체분석]
+            internal_total = [d for d in unusual if d.get('Source') == 'Internal' and d.get('Price', 0) > 0]
+            if internal_total:
+                unusual_summary_lines.append("[특이종목:자체분석]")
+                for region in ['한국', '미국']:
+                    asset_prefix = 'KR' if region == '한국' else 'US'
+                    region_stocks = [d for d in internal_total if d.get('Asset') == asset_prefix]
+                    if region_stocks:
+                        unusual_summary_lines.append(f"<{region}>")
+                        for d in region_stocks[:5]:
+                            reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
+                            unusual_summary_lines.append(f"[{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
         
         unusual_summary = "\n".join(unusual_summary_lines) if unusual_summary_lines else "N/A"
 
