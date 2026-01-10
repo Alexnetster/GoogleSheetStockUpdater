@@ -10,10 +10,12 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import time
+import argparse
+from gspread_formatting import *
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v1.2.0_20260110"
+VERSION = "v1.3.0_20260110"
 
 # 환경 변수 및 설정
 CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
@@ -21,12 +23,17 @@ SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 CALENDAR_ID = os.getenv('CALENDAR_ID', 'primary')
 
 class StockDataUpdater:
-    def __init__(self):
+    def __init__(self, target_date=None):
         self.creds = self._load_credentials()
         self.gc = gspread.authorize(self.creds)
         self.sh = self.gc.open_by_key(SPREADSHEET_ID)
         self.calendar_service = build('calendar', 'v3', credentials=self.creds)
         self.kr_name_map = self._get_kr_name_map()
+        # 대상 날짜 설정 (기본값: 오늘)
+        if isinstance(target_date, str):
+            self.target_date = datetime.datetime.strptime(target_date, '%Y-%m-%d').date()
+        else:
+            self.target_date = target_date or datetime.date.today()
 
     def _load_credentials(self):
         if CREDENTIALS_JSON:
@@ -63,34 +70,49 @@ class StockDataUpdater:
         return f"{n:,.2f}"
 
     def get_market_indices(self):
-        """핵심 시장 지수 및 환율 수집"""
+        """핵심 시장 지수 및 환율 수집 (대상 날짜 기준)"""
         indices = {
             '^KS11': 'KOSPI', '^KQ11': 'KOSDAQ', 
             '^GSPC': 'S&P500', '^IXIC': 'NASDAQ',
             'USDKRW=X': 'USD/KRW'
         }
         results = {}
+        # target_date 포함 5일치 데이터를 가져와서 target_date 이하의 가장 최근 데이터 사용
+        end_date = self.target_date + datetime.timedelta(days=1)
+        start_date = self.target_date - datetime.timedelta(days=10)
+        
         for ticker, name in indices.items():
             try:
                 stock = yf.Ticker(ticker)
-                hist = stock.history(period="2d")
+                hist = stock.history(start=start_date, end=end_date)
+                if hist.empty: continue
+                
+                # target_date 이하의 가장 최신 행 찾기
+                hist = hist[hist.index.date <= self.target_date]
                 if len(hist) < 2: continue
-                curr = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[-2]
-                change = curr - prev
-                change_rate = (change / prev) * 100
+                
+                curr = hist.iloc[-1]
+                prev = hist.iloc[-2]
+                change = curr['Close'] - prev['Close']
+                change_rate = (change / prev['Close']) * 100
+                
                 results[name] = {
-                    'price': curr,
+                    'price': curr['Close'],
                     'change': change,
-                    'rate': change_rate
+                    'rate': change_rate,
+                    'date': curr.name.date().isoformat()
                 }
             except Exception as e:
                 print(f"Error fetching index {name}: {e}")
         return results
 
     def get_stock_data(self, tickers, asset_type):
-        """주식/코인 상세 데이터 수집 (거래량 분석 포함)"""
+        """주식/코인 상세 데이터 수집 (하이브리드 날짜 처리)"""
         data = []
+        end_date = self.target_date + datetime.timedelta(days=1)
+        # 20일 평균 거래량을 위해 여유 있게 40일치 수집
+        start_date = self.target_date - datetime.timedelta(days=40)
+        
         for ticker in tickers:
             try:
                 sym = ticker
@@ -100,13 +122,22 @@ class StockDataUpdater:
                     sym = f"{ticker}-USD"
                 
                 stock = yf.Ticker(sym)
-                # 20일 평균 거래량 확인을 위해 1개월 데이터 수집
-                hist = stock.history(period="1mo")
+                hist = stock.history(start=start_date, end=end_date)
+                if hist.empty: continue
+                
+                # target_date 이하의 최신 데이터
+                hist = hist[hist.index.date <= self.target_date]
                 if len(hist) < 2: continue
                 
                 curr = hist.iloc[-1]
                 prev = hist.iloc[-2]
-                avg_vol = hist['Volume'].iloc[:-1].mean()
+                
+                # 가상화폐인 경우, 만약 target_date에 데이터가 없으면 휴장일이 아니므로 데이터 부족으로 간주
+                # (주식은 주말에 데이터가 없는 것이 정상임)
+                if asset_type == 'Coin' and curr.name.date() < self.target_date:
+                    print(f"Warning: Crypto {ticker} has no data exactly on {self.target_date}")
+
+                avg_vol = hist['Volume'].iloc[:-1].tail(20).mean()
                 curr_vol = curr['Volume']
                 vol_spike = (curr_vol / avg_vol) if avg_vol > 0 else 0
                 
@@ -126,11 +157,46 @@ class StockDataUpdater:
                     'Volume': curr_vol,
                     'VolSpike': round(vol_spike, 2),
                     'MarketCap': stock.info.get('marketCap', 0),
-                    'News': self._get_news_top1(stock, ticker, asset_type)
+                    'News': self._get_news_top1(stock, ticker, asset_type),
+                    'ActualDate': curr.name.date().isoformat()
                 })
             except Exception as e:
                 print(f"Error fetching {asset_type} {ticker}: {e}")
         return data
+
+    def update_global_data(self, data):
+        """글로벌데이터 시트 갱신 및 서식 지정 (Price, Volume, MarketCap 우측 정렬)"""
+        try:
+            ws = self.sh.worksheet('글로벌데이터')
+        except gspread.exceptions.WorksheetNotFound:
+            ws = self.sh.add_worksheet(title='글로벌데이터', rows=100, cols=10)
+        
+        # 헤더 및 데이터 준비
+        header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap', 'Update']
+        rows = [header]
+        now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        for d in data:
+            rows.append([
+                d['Asset'], d['Ticker'], d['Name'], 
+                d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
+                self._format_large_number(d['Volume']), 
+                self._format_large_number(d['MarketCap']), 
+                now_str
+            ])
+        
+        # 시트 업데이트
+        ws.clear()
+        ws.update('A1', rows)
+        
+        # 서식 지정 (D: Price, F: Volume, G: MarketCap 우측 정렬)
+        try:
+            fmt = CellFormat(horizontalAlignment='RIGHT')
+            format_cell_range(ws, 'D2:D100', fmt)
+            format_cell_range(ws, 'F2:G100', fmt)
+            print("Successfully applied right-alignment to Price, Volume, MarketCap columns.")
+        except Exception as e:
+            print(f"Error applying formatting: {e}")
 
     def _get_news_top1(self, stock_obj, ticker, asset_type):
         try:
@@ -147,7 +213,6 @@ class StockDataUpdater:
         return "-"
 
     def get_watchlist(self):
-        """관심종목 탭에서 리스트 읽기"""
         try:
             ws = self.sh.worksheet('관심종목_관리')
             records = ws.get_all_records()
@@ -159,8 +224,8 @@ class StockDataUpdater:
             return []
 
     def get_monthly_worksheet(self):
-        """월별 탭 관리 및 반환"""
-        tab_name = datetime.date.today().strftime('%Y-%m')
+        """월별 탭 관리 및 반환 (target_date 기준)"""
+        tab_name = self.target_date.strftime('%Y-%m')
         try:
             return self.sh.worksheet(tab_name)
         except gspread.exceptions.WorksheetNotFound:
@@ -169,8 +234,13 @@ class StockDataUpdater:
             return ws
 
     def process_and_report(self):
+        print(f"--- Running Updater for Target Date: {self.target_date} ---")
+        
         print("1. 수집 중: 시장 지표...")
         indices = self.get_market_indices()
+        
+        # 만약 코인 데이터가 중요한 경우, 코인은 항상 target_date 데이터가 있어야 함
+        # 주식 지수 중 하나라도 실제 날짜가 target_date와 다르면 휴장 요약 문구 추가 가능
         
         print("2. 수집 중: 관심종목...")
         watchlist_raw = self.get_watchlist()
@@ -183,35 +253,44 @@ class StockDataUpdater:
                 watch_data.append(res[0])
 
         print("3. 수집 중: 주요 마켓 데이터...")
-        # 기존 샘플 리스트 (실제로는 다른 시트에서 관리 가능)
         sample_kr = ['005930', '000660', '035720']
         sample_us = ['AAPL', 'TSLA', 'NVDA']
         market_all = self.get_stock_data(sample_kr, 'KR') + self.get_stock_data(sample_us, 'US')
 
-        # 분석: 특이종목 (변동성 15% 이상 OR 거래량 3배 이상)
+        print("3.5. 갱신 중: 글로벌데이터 시트...")
+        self.update_global_data(market_all)
+
         unusual = [d for d in market_all if abs(d['ChangeRate']) >= 15.0 or d['VolSpike'] >= 3.0]
 
-        # 요약 텍스트 생성
         idx_summary = " / ".join([f"{k}: {v['price']:,.1f}({v['rate']:+.2f}%)" for k, v in indices.items()])
-        
         watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
         unusual_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}% / 거래량 {d['VolSpike']}배): {d['News']}" for d in unusual])
 
-        # 시트 기록
-        print("4. 기록 중: 월별 일지...")
+        print("4. 기록 중: 월별 일지 (중복 체크 포함)...")
         ws_monthly = self.get_monthly_worksheet()
-        ws_monthly.append_row([
-            datetime.date.today().isoformat(),
+        all_dates = ws_monthly.col_values(1)
+        target_iso = self.target_date.isoformat()
+        
+        row_data = [
+            target_iso,
             f"KR:{indices.get('KOSPI', {}).get('rate', 0):+.2f}%, US:{indices.get('S&P500', {}).get('rate', 0):+.2f}%",
             idx_summary,
             watch_summary if watch_summary else "N/A",
             unusual_summary if unusual_summary else "N/A",
             f"{APP_NAME} {VERSION}"
-        ])
+        ]
 
-        # 캘린더 생성
+        if target_iso in all_dates:
+            row_idx = all_dates.index(target_iso) + 1
+            ws_monthly.update(f'A{row_idx}:F{row_idx}', [row_data])
+            print(f"Updated existing row for {target_iso}.")
+        else:
+            ws_monthly.append_row(row_data)
+            print(f"Appended new row for {target_iso}.")
+
         print("5. 연동 중: 구글 캘린더...")
-        cal_title = f"[투자일지] KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}% / S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
+        # 캘린더도 동일 날짜 중복 이벤트를 피하기 위해 제목에 날짜 포함
+        cal_title = f"[{self.target_date}] 투자일지 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
         cal_desc = f"""## ⭐ 관심종목 브리핑
 {watch_summary if watch_summary else "등록된 관심종목이 없습니다."}
 
@@ -227,24 +306,45 @@ class StockDataUpdater:
 [구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})
 """
         self.create_calendar_event(cal_title, cal_desc)
-        print("모든 작업이 완료되었습니다.")
+        print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
 
     def create_calendar_event(self, title, description):
-        event = {
-            'summary': title,
-            'description': description,
-            'start': {'date': datetime.date.today().isoformat(), 'timeZone': 'Asia/Seoul'},
-            'end': {'date': datetime.date.today().isoformat(), 'timeZone': 'Asia/Seoul'},
-        }
+        # 해당 날짜의 기존 이벤트 검색 및 삭제 (중복 방지)
+        time_min = datetime.datetime.combine(self.target_date, datetime.time.min).isoformat() + 'Z'
+        time_max = datetime.datetime.combine(self.target_date, datetime.time.max).isoformat() + 'Z'
+        
         try:
+            events_result = self.calendar_service.events().list(
+                calendarId=CALENDAR_ID, timeMin=time_min, timeMax=time_max,
+                singleEvents=True, orderBy='startTime'
+            ).execute()
+            events = events_result.get('items', [])
+            
+            for ev in events:
+                if "투자일지" in ev.get('summary', ''):
+                    self.calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=ev['id']).execute()
+                    print(f"Deleted existing calendar event: {ev['summary']}")
+
+            # 새 이벤트 생성
+            event = {
+                'summary': title,
+                'description': description,
+                'start': {'date': self.target_date.isoformat(), 'timeZone': 'Asia/Seoul'},
+                'end': {'date': self.target_date.isoformat(), 'timeZone': 'Asia/Seoul'},
+            }
             self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+            print(f"Created new calendar event: {title}")
         except Exception as e:
-            print(f"Error creating calendar event: {e}")
+            print(f"Error updating calendar event: {e}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("date", nargs="?", help="Target date (YYYY-MM-DD)", default=None)
+    args = parser.parse_args()
+
     if not SPREADSHEET_ID:
         print("ERROR: SPREADSHEET_ID is missing.")
         exit(1)
     
-    updater = StockDataUpdater()
+    updater = StockDataUpdater(target_date=args.date)
     updater.process_and_report()
