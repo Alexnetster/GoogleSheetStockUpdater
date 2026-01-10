@@ -171,6 +171,33 @@ class StockDataUpdater:
                 name = stock.info.get('longName') or stock.info.get('shortName') or ticker
                 if asset_type == 'KR': name = self.kr_name_map.get(ticker, name)
 
+                # 전문가 의견/추천 정보 수집
+                recommendation = "-"
+                expert_opinion = ""
+                
+                try:
+                    if asset_type == 'US':
+                        rec_key = stock.info.get('recommendationKey', '-')
+                        target_price = stock.info.get('targetMeanPrice')
+                        if rec_key != '-':
+                            recommendation = f"미국:{rec_key.upper()}"
+                            if target_price:
+                                recommendation += f" (T:${target_price})"
+                    elif asset_type == 'KR':
+                        # 네이버 크롤링으로 투자의견 추출 시도
+                        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
+                        resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+                        soup = BeautifulSoup(resp.text, 'html.parser')
+                        # 투자의견 및 목표주가 (rt_invest_box 내)
+                        invest_box = soup.select_one('.rt_invest_box')
+                        if invest_box:
+                            opinion = invest_box.select_one('em.invest_point')
+                            target = invest_box.select_one('em.num')
+                            if opinion: recommendation = f"국장:{opinion.text.strip()}"
+                            if target: recommendation += f" (T:₩{target.text.strip()})"
+                except:
+                    pass
+
                 data.append({
                     'Asset': asset_type,
                     'Ticker': ticker,
@@ -182,7 +209,9 @@ class StockDataUpdater:
                     'VolSpike': round(vol_spike, 2),
                     'MarketCap': stock.info.get('marketCap', 0),
                     'News': self._get_news_top1(stock, ticker, asset_type),
-                    'ActualDate': curr.name.date().isoformat()
+                    'ActualDate': curr.name.date().isoformat(),
+                    'Recommendation': recommendation,
+                    'ExpertOpinion': expert_opinion
                 })
             except Exception as e:
                 print(f"Error fetching {asset_type} {ticker}: {e}")
@@ -316,9 +345,9 @@ class StockDataUpdater:
             records = ws.get_all_records()
             return records
         except:
-            print("Watchlist sheet not found. Creating one...")
+            print("Watchlist sheet not found. Creating one with enhanced structure...")
             ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
-            ws.append_row(['Ticker', 'Name', 'Asset', 'Memo', 'Alert_Price'])
+            ws.append_row(['Country', 'Ticker', 'Name', 'Asset', 'Memo', 'Alert_Price', 'Recommendation', 'Expert_Opinion'])
             return []
 
     def get_monthly_worksheet(self):
@@ -372,10 +401,20 @@ class StockDataUpdater:
         watchlist_raw = self.get_watchlist()
         watch_data = []
         for item in watchlist_raw:
-            if not item.get('Ticker'): continue
-            res = self.get_stock_data([str(item['Ticker'])], item.get('Asset', 'US'))
+            ticker = str(item.get('Ticker', ''))
+            if not ticker: continue
+            
+            asset_type = item.get('Asset', 'US')
+            res = self.get_stock_data([ticker], asset_type)
             if res:
+                # 시트의 사용자 메모 및 의견 병합
                 res[0]['Memo'] = item.get('Memo', '')
+                res[0]['ExpertOpinion_User'] = item.get('Expert_Opinion', '')
+                
+                # 리포트용 요약 문구 생성 (시트 데이터 기반 추천 vs 시스템 자동 추천)
+                final_rec = item.get('Recommendation', res[0].get('Recommendation', '-'))
+                res[0]['FinalRecommendation'] = final_rec
+                
                 watch_data.append(res[0])
 
         # 실제 데이터 존재 여부로 시장 개장 여부 판단
@@ -401,7 +440,7 @@ class StockDataUpdater:
         # 미국 시장 개장 시 미국 주식 수집
         if is_us_open:
             print(">>> 미국 시장 개장: 미국 주식 수집")
-            sample_us = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'PLTR', 'IONQ', 'RGTI', 'SOXL', 'TQQQ', 'INTC']  # 주요 빅테크 및 성장주, 레버리지 ETF
+            sample_us = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'INTC']  # 주요 빅테크 및 성장주
             market_all.extend(self.get_stock_data(sample_us, 'US'))
         else:
             print(">>> 미국 시장 휴장: 미국 주식 제외")
@@ -475,7 +514,15 @@ class StockDataUpdater:
         market_summary_lines.append(f"환율: USD/KRW {indices.get('USD/KRW', {}).get('change', 0):+.1f}원")
         market_summary = "\n".join(market_summary_lines)
         
-        watch_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%): {d['Memo']}" for d in watch_data])
+        # 관심종목 요약 (추천 정보 포함)
+        watch_summary_lines = []
+        for d in watch_data:
+            rec_part = f" [{d['FinalRecommendation']}]" if d['FinalRecommendation'] != "-" else ""
+            memo_part = f": {d['Memo']}" if d['Memo'] else ""
+            user_opinion = f" (의견: {d['ExpertOpinion_User']})" if d['ExpertOpinion_User'] else ""
+            watch_summary_lines.append(f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%){rec_part}{memo_part}{user_opinion}")
+        
+        watch_summary = "\n".join(watch_summary_lines)
         
         # 주요 종목 요약 (모든 샘플 종목 중 가격 정보가 유효한 것만 표시)
         unusual_summary_lines = []
