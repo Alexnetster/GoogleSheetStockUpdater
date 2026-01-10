@@ -333,8 +333,28 @@ class StockDataUpdater:
         id_display = "|".join(list(CALENDAR_ID))
         print(f"DEBUG: CALENDAR_ID Raw Check: [{id_display}] (Length: {len(CALENDAR_ID)})")
         
+        try:
+            # 1. 서비스 계정이 볼 수 있는 캘린더 목록 출력 (진단용)
+            print("DEBUG: Checking accessible calendars for this service account...")
+            cal_list = self.calendar_service.calendarList().list().execute()
+            items = cal_list.get('items', [])
+            accessible_ids = [it.get('id') for it in items]
+            print(f"DEBUG: Service Account can see {len(items)} calendars: {accessible_ids}")
+            
+            if CALENDAR_ID not in accessible_ids:
+                print(f"WARNING: '{CALENDAR_ID}' is NOT in the accessible calendar list.")
+                print("Proceeding anyway with direct ID access...")
+
+            # 2. 캘린더 메타데이터 직접 조회 시도 (404 확인용)
+            print(f"DEBUG: Testing direct access to calendar: {CALENDAR_ID}")
+            self.calendar_service.calendars().get(calendarId=CALENDAR_ID).execute()
+            print("DEBUG: Calendar metadata access successful.")
+
+        except Exception as e:
+            print(f"DEBUG_ERROR: Basic access check failed: {str(e)}")
+
         if CALENDAR_ID == 'primary':
-            print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar, not yours.")
+            print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar.")
 
         # 해당 날짜의 기존 이벤트 검색 및 삭제 (중복 방지)
         search_start = (self.target_date - datetime.timedelta(days=1)).isoformat() + "T00:00:00Z"
