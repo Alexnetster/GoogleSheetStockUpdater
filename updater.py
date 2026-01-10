@@ -187,53 +187,70 @@ class StockDataUpdater:
                 print(f"Error fetching {asset_type} {ticker}: {e}")
         return data
 
-    def update_global_data(self, data, indices=None):
-        """글로벌데이터 시트 갱신 및 서식 지정 (Price, Volume, MarketCap 우측 정렬)"""
+    def update_global_data(self, data, indices=None, is_kr_open=True, is_us_open=True):
+        """'오늘' 시트 갱신 및 UI 개선 (휴장 안내, 요일 포함 시간 표시)"""
+        sheet_name = '오늘'
         try:
-            ws = self.sh.worksheet('글로벌데이터')
+            ws = self.sh.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            ws = self.sh.add_worksheet(title='글로벌데이터', rows=100, cols=10)
+            ws = self.sh.add_worksheet(title=sheet_name, rows=100, cols=10)
         
         rows = []
-        now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-        # 시장 요약 정보 추가 (상단)
+        # 요일 및 시간 포맷팅
+        weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+        now = datetime.datetime.now()
+        now_full_str = now.strftime('%Y-%m-%d') + f" ({weekdays[now.weekday()]}) " + now.strftime('%H:%M:%S')
+        
+        target_date_str = self.target_date.strftime('%Y-%m-%d') + f" ({weekdays[self.target_date.weekday()]})"
+        
+        # 내일 개장 여부 판단 (단순 주말 체크)
+        tomorrow = self.target_date + datetime.timedelta(days=1)
+        is_kr_open_tomorrow = (tomorrow.weekday() < 5)
+        is_us_open_tomorrow = (tomorrow.weekday() < 5)
+        
+        # 시장 상태 요약 행
+        status_lines = []
+        kr_today = "개장" if is_kr_open else "휴장"
+        kr_tmrw = "개장" if is_kr_open_tomorrow else "휴장"
+        us_today = "개장" if is_us_open else "휴장"
+        us_tmrw = "개장" if is_us_open_tomorrow else "휴장"
+        
+        status_lines.append(f"기준 일자: {target_date_str} [국장 오늘 {kr_today}/내일 {kr_tmrw}][미장 오늘 {us_today}/내일 {us_tmrw}]")
+        status_lines.append(f"업데이트: {now_full_str}")
+        
+        rows.append(['=== 📅 시장 현황 및 업데이트 ===', '', '', '', '', '', ''])
+        for line in status_lines:
+            rows.append([line, '', '', '', '', '', ''])
+        rows.append([]) # 빈 줄
+        
+        # 시장 지표 섹션
         if indices:
-            rows.append(['=== 📊 Market Summary ===', '', '', '', '', '', '', f'업데이트: {now_str}'])
-            # Market Summary 헤더
-            summary_header = ['번호', '국가', '거래소', '지수', '변동폭', '', '', '']
+            rows.append(['=== 📊 지수 및 환율 ===', '', '', '', '', '', ''])
+            summary_header = ['번호', '국가', '거래소', '지수', '변동률', '', '']
             rows.append(summary_header)
             
-            # Market Summary - 번호, 국가, 거래소 분리
             idx_num = 1
             for k, v in indices.items():
-                # 국가, 거래소 정보 결정
                 if k in ['KOSPI', 'KOSDAQ']:
-                    country = "한국"
-                    exchange = k
+                    country, exchange = "한국", k
                 elif k in ['S&P500', 'NASDAQ']:
-                    country = "미국"
-                    exchange = k
+                    country, exchange = "미국", k
                 elif k == 'USD/KRW':
-                    country = "환율"
-                    exchange = "USD/KRW"
+                    country, exchange = "환율", "USD/KRW"
                 else:
-                    country = "-"
-                    exchange = k
+                    country, exchange = "-", k
                 
-                # 지수, 변동폭 (우측 정렬용)
-                price_str = f"{v['price']:,.1f}"  # 천단위 콤마
+                price_str = f"{v['price']:,.1f}"
                 rate_str = f"{v['rate']:+.2f}%"
-                
-                rows.append([str(idx_num), country, exchange, price_str, rate_str, '', '', ''])
+                rows.append([str(idx_num), country, exchange, price_str, rate_str, '', ''])
                 idx_num += 1
             
-            rows.append([])  # 빈 줄
-            rows.append([])  # 빈 줄
+            rows.append([])
         
-        # 주요 종목 데이터 헤더 및 데이터
-        rows.append(['=== 📈 주요 종목 데이터 ===', '', '', '', '', '', '', ''])
-        header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap', 'Update']
+        # 주요 종목 데이터 섹션
+        rows.append(['=== 📈 주요 종목 (실시간) ===', '', '', '', '', '', ''])
+        header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap']
         rows.append(header)
         
         for d in data:
@@ -241,8 +258,7 @@ class StockDataUpdater:
                 d['Asset'], d['Ticker'], d['Name'], 
                 d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
                 self._format_large_number(d['Volume']), 
-                self._format_large_number(d['MarketCap']), 
-                now_str
+                self._format_large_number(d['MarketCap'])
             ])
         
         # 시트 업데이트 (gspread v6+ 대응: 명시적 인자 사용)
@@ -254,23 +270,22 @@ class StockDataUpdater:
             fmt_right = CellFormat(horizontalAlignment='RIGHT')
             fmt_left = CellFormat(horizontalAlignment='LEFT')
             
-            # Market Summary 섹션 서식
+            # 지수 섹션 서식 (지수가 있을 때만)
             if indices:
-                # indices 개수만큼 행 계산 (헤더 2줄 + 데이터)
-                summary_start = 3  # "=== 📊 Market Summary ===" 다음 헤더 다음
-                summary_end = summary_start + len(indices)
+                # 시장 상태 섹션 높이 (헤더 + 3줄 상태 안내 + 빈줄) = 5
+                status_rows = 5 
+                # 지수 헤더는 status_rows + 1, 데이터는 status_rows + 2부터
+                summary_start = status_rows + 2
+                summary_end = summary_start + len(indices) - 1
                 
-                # 국가, 거래소 좌측 정렬 (B, C 컬럼)
                 format_cell_range(ws, f'B{summary_start}:C{summary_end}', fmt_left)
-                
-                # 지수, 변동폭 우측 정렬 (D, E 컬럼)
                 format_cell_range(ws, f'D{summary_start}:E{summary_end}', fmt_right)
             
-            # 주요 종목 데이터의 Price, ChangeRate, Volume, MarketCap 우측 정렬 (D, E, F, G 컬럼)
+            # 주요 종목 데이터 정렬
             data_start_row = len(rows) - len(data) + 1
-            format_cell_range(ws, f'D{data_start_row}:G100', fmt_right)
+            format_cell_range(ws, f'D{data_start_row}:G200', fmt_right)
             
-            print("Successfully applied alignment to Market Summary and data columns.")
+            print(f"Successfully applied formatting to '{sheet_name}' sheet.")
         except Exception as e:
             print(f"Error applying formatting: {e}")
 
@@ -389,8 +404,8 @@ class StockDataUpdater:
         sample_crypto = ['BTC', 'ETH', 'XRP', 'SOL']
         market_all.extend(self.get_stock_data(sample_crypto, 'Coin'))
 
-        print("3.5. 갱신 중: 글로벌데이터 시트...")
-        self.update_global_data(market_all, indices)
+        print("3.5. 갱신 중: '오늘' 시트...")
+        self.update_global_data(market_all, indices, is_kr_open, is_us_open)
 
         print("4. 수집 중: 특이종목 (네이버 증권 + FDR 전수 조사 + 자체 분석)...")
         
