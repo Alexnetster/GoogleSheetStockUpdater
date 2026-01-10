@@ -176,20 +176,27 @@ class StockDataUpdater:
         
         # 시장 요약 정보 추가 (상단)
         if indices:
-            rows.append(['=== 📊 오늘의 시장 현황 ===', '', '', '', '', '', '', f'업데이트: {now_str}'])
+            rows.append(['=== 📊 Market Summary ===', '', '', '', '', '', '', f'업데이트: {now_str}'])
             rows.append([])  # 빈 줄
             
-            # Market Summary
-            rows.append(['Market Summary', '', '', '', '', '', '', ''])
-            rows.append(['KR', f"KOSPI {indices.get('KOSPI', {}).get('rate', 0):+.2f}%, KOSDAQ {indices.get('KOSDAQ', {}).get('rate', 0):+.2f}%", '', '', '', '', '', ''])
-            rows.append(['US', f"S&P500 {indices.get('S&P500', {}).get('rate', 0):+.2f}%, NASDAQ {indices.get('NASDAQ', {}).get('rate', 0):+.2f}%", '', '', '', '', '', ''])
-            rows.append(['환율', f"USD/KRW {indices.get('USD/KRW', {}).get('change', 0):+.1f}원", '', '', '', '', '', ''])
-            rows.append([])  # 빈 줄
-            
-            # Indices Info
-            rows.append(['Indices Info', '', '', '', '', '', '', ''])
+            # Market Summary - 국가/거래소 형태로 표시
             for k, v in indices.items():
-                rows.append([k, f"{v['price']:,.1f}", f"{v['rate']:+.2f}%", '', '', '', '', ''])
+                # 국가/거래소 정보 결정
+                if k in ['KOSPI', 'KOSDAQ']:
+                    country_exchange = f"한국/{k}"
+                elif k in ['S&P500', 'NASDAQ']:
+                    country_exchange = f"미국/{k}"
+                elif k == 'USD/KRW':
+                    country_exchange = "환율/USD/KRW"
+                else:
+                    country_exchange = k
+                
+                # 지수, 변동폭 (우측 정렬용)
+                price_str = f"{v['price']:,.1f}"  # 천단위 콤마
+                rate_str = f"{v['rate']:+.2f}%"
+                
+                rows.append([country_exchange, price_str, rate_str, '', '', '', '', ''])
+            
             rows.append([])  # 빈 줄
             rows.append([])  # 빈 줄
         
@@ -211,14 +218,23 @@ class StockDataUpdater:
         ws.clear()
         ws.update(values=rows, range_name='A1')
         
-        # 서식 지정 (D: Price, F: Volume, G: MarketCap 우측 정렬)
+        # 서식 지정
         try:
             fmt = CellFormat(horizontalAlignment='RIGHT')
-            # 데이터 시작 행을 동적으로 계산 (indices가 있으면 더 아래에서 시작)
+            
+            # Market Summary 섹션의 지수, 변동폭 우측 정렬 (B, C 컬럼)
+            if indices:
+                # indices 개수만큼 행 계산 (헤더 2줄 + 데이터)
+                summary_start = 3  # "=== 📊 Market Summary ===" 다음 빈 줄 다음
+                summary_end = summary_start + len(indices)
+                format_cell_range(ws, f'B{summary_start}:C{summary_end}', fmt)
+            
+            # 주요 종목 데이터의 Price, Volume, MarketCap 우측 정렬 (D, F, G 컬럼)
             data_start_row = len(rows) - len(data) + 1
             format_cell_range(ws, f'D{data_start_row}:D100', fmt)
             format_cell_range(ws, f'F{data_start_row}:G100', fmt)
-            print("Successfully applied right-alignment to Price, Volume, MarketCap columns.")
+            
+            print("Successfully applied right-alignment to Market Summary and data columns.")
         except Exception as e:
             print(f"Error applying formatting: {e}")
 
@@ -287,22 +303,38 @@ class StockDataUpdater:
                 res[0]['Memo'] = item.get('Memo', '')
                 watch_data.append(res[0])
 
-        # 주말 체크 (토요일=5, 일요일=6)
-        is_weekend = self.target_date.weekday() >= 5
+        # 실제 데이터 존재 여부로 시장 개장 여부 판단
+        kospi_date = indices.get('KOSPI', {}).get('date')
+        sp500_date = indices.get('S&P500', {}).get('date')
+        
+        is_kr_open = (kospi_date == self.target_date.isoformat())
+        is_us_open = (sp500_date == self.target_date.isoformat())
+        
+        print(f">>> 시장 개장 상태: 한국={is_kr_open}, 미국={is_us_open}")
         
         print("3. 수집 중: 주요 마켓 데이터...")
         market_all = []
         
-        if is_weekend:
-            print(">>> 주말 감지: 주식 시장 휴장, 코인 데이터만 수집합니다.")
-            # 주말에는 코인만 수집 (24/7 거래)
-            sample_crypto = ['BTC', 'ETH', 'XRP', 'SOL']  # 주요 코인
-            market_all = self.get_stock_data(sample_crypto, 'Coin')
+        # 한국 시장 개장 시 한국 주식 수집
+        if is_kr_open:
+            print(">>> 한국 시장 개장: 한국 주식 수집")
+            sample_kr = ['005930', '000660', '005380', '035420']  # 삼성전자, SK하이닉스, 현대차, NAVER
+            market_all.extend(self.get_stock_data(sample_kr, 'KR'))
         else:
-            # 평일: 주식 + 코인
-            sample_kr = ['005930', '000660', '005380', '035420'] # 삼성전자, SK하이닉스, 현대차, NAVER
-            sample_us = ['AAPL', 'TSLA', 'NVDA', 'MSFT'] # 애플, 테슬라, 엔비디아, 마이크로소프트
-            market_all = self.get_stock_data(sample_kr, 'KR') + self.get_stock_data(sample_us, 'US')
+            print(">>> 한국 시장 휴장: 한국 주식 제외")
+        
+        # 미국 시장 개장 시 미국 주식 수집
+        if is_us_open:
+            print(">>> 미국 시장 개장: 미국 주식 수집")
+            sample_us = ['AAPL', 'TSLA', 'NVDA', 'MSFT']  # 애플, 테슬라, 엔비디아, 마이크로소프트
+            market_all.extend(self.get_stock_data(sample_us, 'US'))
+        else:
+            print(">>> 미국 시장 휴장: 미국 주식 제외")
+        
+        # 코인은 항상 수집 (24/7 거래)
+        print(">>> 코인 시장: 24/7 거래 (항상 수집)")
+        sample_crypto = ['BTC', 'ETH', 'XRP', 'SOL']
+        market_all.extend(self.get_stock_data(sample_crypto, 'Coin'))
 
         print("3.5. 갱신 중: 글로벌데이터 시트...")
         self.update_global_data(market_all, indices)
@@ -350,42 +382,78 @@ class StockDataUpdater:
             print(f"Appended new row for {target_iso}.")
 
         print("5. 연동 중: 구글 캘린더...")
-        # 캘린더도 동일 날짜 중복 이벤트를 피하기 위해 제목에 날짜 포함
-        if is_weekend:
-            # 주말: 코인 정보만 표시
-            cal_title = f"[{self.target_date}] 📅 주말 (주식 시장 휴장)"
-            cal_desc = f"""## 🚫 주식 시장 휴장
-오늘은 주말입니다. 한국 및 미국 주식 시장은 휴장입니다.
-
-## ⭐ 관심종목 브리핑
-{watch_summary if watch_summary else "등록된 관심종목이 없습니다."}
-
-## 🪙 코인 시장 (24/7 거래)
-{major_summary if market_all else "코인 데이터를 수집하지 못했습니다."}
-
-## 🔗 상세 내용 보기
-[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})
-"""
-        else:
-            # 평일: 전체 정보 표시
+        # 캘린더 이벤트 제목 및 내용 생성
+        
+        # 시장 개장 상태에 따라 제목 결정
+        if is_kr_open and is_us_open:
+            # 양쪽 다 개장
             cal_title = f"[{self.target_date}] 투자일지 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
-            cal_desc = f"""## ⭐ 관심종목 브리핑
-{watch_summary if watch_summary else "등록된 관심종목이 없습니다."}
-
-## 📈 핵심 시장 지표
-- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%) / KOSDAQ {indices.get('KOSDAQ',{}).get('price',0):,.1f} ({indices.get('KOSDAQ',{}).get('rate',0):+.2f}%)
-- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%) / NASDAQ {indices.get('NASDAQ',{}).get('price',0):,.1f} ({indices.get('NASDAQ',{}).get('rate',0):+.2f}%)
-- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f} (전일대비 {indices.get('USD/KRW',{}).get('change',0):+.1f}원)
-
-## 🏢 주요 종목 현황 (Market Leaders)
-{major_summary}
-
-## 🔥 실시간 특이종목 (거래량/변동성)
-{unusual_summary if unusual_summary else "오늘의 특이종목이 없습니다."}
-
-## 🔗 상세 내용 보기
-[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})
-"""
+        elif is_kr_open:
+            # 한국만 개장
+            cal_title = f"[{self.target_date}] 투자일지 (미장 휴장) KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+        elif is_us_open:
+            # 미국만 개장
+            cal_title = f"[{self.target_date}] 투자일지 (국장 휴장) S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
+        else:
+            # 양쪽 다 휴장
+            cal_title = f"[{self.target_date}] 📅 주식 시장 휴장"
+        
+        # 캘린더 본문 생성
+        cal_desc_parts = []
+        
+        # 휴장 안내
+        if not is_kr_open and not is_us_open:
+            cal_desc_parts.append("## 🚫 주식 시장 휴장")
+            cal_desc_parts.append("한국 및 미국 주식 시장은 휴장입니다.")
+            cal_desc_parts.append("")
+        elif not is_kr_open:
+            cal_desc_parts.append("## 🚫 한국 시장 휴장")
+            cal_desc_parts.append("한국 주식 시장은 휴장입니다.")
+            cal_desc_parts.append("")
+        elif not is_us_open:
+            cal_desc_parts.append("## 🚫 미국 시장 휴장")
+            cal_desc_parts.append("미국 주식 시장은 휴장입니다.")
+            cal_desc_parts.append("")
+        
+        # 관심종목
+        cal_desc_parts.append("## ⭐ 관심종목 브리핑")
+        cal_desc_parts.append(watch_summary if watch_summary else "등록된 관심종목이 없습니다.")
+        cal_desc_parts.append("")
+        
+        # 시장 지표 (개장한 시장만 표시)
+        if is_kr_open or is_us_open:
+            cal_desc_parts.append("## 📈 핵심 시장 지표")
+            if is_kr_open:
+                cal_desc_parts.append(f"- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%) / KOSDAQ {indices.get('KOSDAQ',{}).get('price',0):,.1f} ({indices.get('KOSDAQ',{}).get('rate',0):+.2f}%)")
+            if is_us_open:
+                cal_desc_parts.append(f"- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%) / NASDAQ {indices.get('NASDAQ',{}).get('price',0):,.1f} ({indices.get('NASDAQ',{}).get('rate',0):+.2f}%)")
+            cal_desc_parts.append(f"- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f} (전일대비 {indices.get('USD/KRW',{}).get('change',0):+.1f}원)")
+            cal_desc_parts.append("")
+        
+        # 주요 종목 (주식이 있으면 표시)
+        stock_data = [d for d in market_all if d.get('Asset') in ['KR', 'US']]
+        if stock_data:
+            cal_desc_parts.append("## 🏢 주요 종목 현황")
+            cal_desc_parts.append(major_summary)
+            cal_desc_parts.append("")
+            
+            cal_desc_parts.append("## 🔥 실시간 특이종목 (거래량/변동성)")
+            cal_desc_parts.append(unusual_summary if unusual_summary else "오늘의 특이종목이 없습니다.")
+            cal_desc_parts.append("")
+        
+        # 코인 (항상 표시)
+        coin_data = [d for d in market_all if d.get('Asset') == 'Coin']
+        if coin_data:
+            cal_desc_parts.append("## 🪙 코인 시장 (24/7 거래)")
+            coin_summary = "\n".join([f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)" for d in coin_data])
+            cal_desc_parts.append(coin_summary)
+            cal_desc_parts.append("")
+        
+        # 링크
+        cal_desc_parts.append("## 🔗 상세 내용 보기")
+        cal_desc_parts.append(f"[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})")
+        
+        cal_desc = "\n".join(cal_desc_parts)
         self.create_calendar_event(cal_title, cal_desc)
         print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
 
