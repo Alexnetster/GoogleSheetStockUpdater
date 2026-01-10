@@ -248,18 +248,24 @@ class StockDataUpdater:
             
             rows.append([])
         
-        # 주요 종목 데이터 섹션
-        rows.append(['=== 📈 주요 종목 (실시간) ===', '', '', '', '', '', ''])
-        header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap']
-        rows.append(header)
-        
-        for d in data:
-            rows.append([
-                d['Asset'], d['Ticker'], d['Name'], 
-                d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
-                self._format_large_number(d['Volume']), 
-                self._format_large_number(d['MarketCap'])
-            ])
+        # 주요 종목 데이터 섹션 (그룹화 표시 - 통일된 형식)
+        asset_info = {'KR': ('한국', '📈'), 'US': ('미국', '📈'), 'Coin': ('코인', '📈')}
+        for asset_code, (asset_name, emoji) in asset_info.items():
+            asset_data = [d for d in data if d['Asset'] == asset_code]
+            if not asset_data: continue
+            
+            rows.append([f'=== [주요종목:{asset_name}] {emoji} ===', '', '', '', '', '', ''])
+            header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap']
+            rows.append(header)
+            
+            for d in asset_data:
+                rows.append([
+                    d['Asset'], d['Ticker'], d['Name'], 
+                    d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
+                    self._format_large_number(d['Volume']), 
+                    self._format_large_number(d['MarketCap'])
+                ])
+            rows.append([]) # 섹션 간 빈 줄
         
         # 시트 업데이트 (gspread v6+ 대응: 명시적 인자 사용)
         ws.clear()
@@ -476,45 +482,40 @@ class StockDataUpdater:
         # 특이종목 요약 - 리포트 형식 개편 (주요종목 포함)
         unusual_summary_lines = []
         
-        # 1. [주요종목] 섹션 (개장한 시장 또는 코인 위주)
-        # 가격 정보가 정상이고 해당 시장이 개장했거나 코인인 경우만 표시
-        major_list = []
-        for d in market_all:
-            if d.get('Price', 0) <= 0: continue
-            
-            asset = d.get('Asset', '')
-            if asset == 'KR' and not is_kr_open: continue
-            if asset == 'US' and not is_us_open: continue
-            
-            major_list.append(d)
-            
-        if major_list:
-            unusual_summary_lines.append("[주요종목]")
-            for d in major_list:
-                unusual_summary_lines.append(f"- {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-            unusual_summary_lines.append("")
+        # 1. [주요종목] 섹션 세분화 (개장한 시장 또는 코인 위주)
+        asset_types = [('KR', '한국', '📈'), ('US', '미국', '📈'), ('Coin', '코인', '📈')]
+        for a_code, a_name, a_emoji in asset_types:
+            subset = []
+            for d in market_all:
+                if d.get('Price', 0) <= 0: continue
+                if d.get('Asset') != a_code: continue
+                if a_code == 'KR' and not is_kr_open: continue
+                if a_code == 'US' and not is_us_open: continue
+                subset.append(d)
+                
+            if subset:
+                unusual_summary_lines.append(f"[주요종목:{a_name}] {a_emoji}")
+                for d in subset:
+                    unusual_summary_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+                unusual_summary_lines.append("")
 
-        # 2. [특이종목] 섹션 시작
-        unusual_summary_lines.append("[특이종목]")
-
-        # 3. [특이종목/네이버요약] (네이버/FDR 데이터)
-        # 가격 정보가 없는 종목은 필터링
-        naver_stocks = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
-        if naver_stocks:
-            unusual_summary_lines.append("[특이종목/네이버요약]")
-            unusual_summary_lines.append("📰 네이버 증권 (시장 주목)")
-            for d in naver_stocks[:10]:  # 최대 10개
-                category = d.get('Category', '기타')
-                unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-            unusual_summary_lines.append("")
-        
-        # 4. 자체 분석 (완화 기준)
-        internal_stocks = [d for d in unusual if d.get('Source') == 'Internal']
-        if internal_stocks:
-            unusual_summary_lines.append("📊 자체 분석 (완화 기준)")
-            for d in internal_stocks[:5]:  # 최대 5개
-                reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
-                unusual_summary_lines.append(f"[{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+        # 2. [특이종목:네이버증권] 📰 (시장 주목)
+        if unusual:
+            naver_stocks = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
+            if naver_stocks:
+                unusual_summary_lines.append("[특이종목:네이버증권] 📰 (시장 주목)")
+                for d in naver_stocks[:10]:  # 최대 10개
+                    category = d.get('Category', '기타')
+                    unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+                unusual_summary_lines.append("")
+            
+            # 3. [특이종목:자체분석] 📊 (완화 기준)
+            internal_stocks = [d for d in unusual if d.get('Source') == 'Internal' and d.get('Price', 0) > 0]
+            if internal_stocks:
+                unusual_summary_lines.append("[특이종목:자체분석] 📊 (완화 기준)")
+                for d in internal_stocks[:5]:  # 최대 5개
+                    reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
+                    unusual_summary_lines.append(f"[{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
         
         unusual_summary = "\n".join(unusual_summary_lines) if unusual_summary_lines else "N/A"
 
