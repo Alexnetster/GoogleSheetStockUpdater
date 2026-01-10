@@ -15,7 +15,7 @@ from gspread_formatting import *
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v1.3.0_20260110"
+VERSION = "v1.4.0_20260110"
 
 # 환경 변수 및 설정 (공백 제거 처리)
 CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
@@ -285,10 +285,22 @@ class StockDataUpdater:
                 res[0]['Memo'] = item.get('Memo', '')
                 watch_data.append(res[0])
 
+        # 주말 체크 (토요일=5, 일요일=6)
+        is_weekend = self.target_date.weekday() >= 5
+        
         print("3. 수집 중: 주요 마켓 데이터...")
-        sample_kr = ['005930', '000660', '005380', '035420'] # 삼성전자, SK하이닉스, 현대차, NAVER
-        sample_us = ['AAPL', 'TSLA', 'NVDA', 'MSFT'] # 애플, 테슬라, 엔비디아, 마이크로소프트
-        market_all = self.get_stock_data(sample_kr, 'KR') + self.get_stock_data(sample_us, 'US')
+        market_all = []
+        
+        if is_weekend:
+            print(">>> 주말 감지: 주식 시장 휴장, 코인 데이터만 수집합니다.")
+            # 주말에는 코인만 수집 (24/7 거래)
+            sample_crypto = ['BTC', 'ETH', 'XRP', 'SOL']  # 주요 코인
+            market_all = self.get_stock_data(sample_crypto, 'Coin')
+        else:
+            # 평일: 주식 + 코인
+            sample_kr = ['005930', '000660', '005380', '035420'] # 삼성전자, SK하이닉스, 현대차, NAVER
+            sample_us = ['AAPL', 'TSLA', 'NVDA', 'MSFT'] # 애플, 테슬라, 엔비디아, 마이크로소프트
+            market_all = self.get_stock_data(sample_kr, 'KR') + self.get_stock_data(sample_us, 'US')
 
         print("3.5. 갱신 중: 글로벌데이터 시트...")
         self.update_global_data(market_all, indices)
@@ -344,8 +356,25 @@ class StockDataUpdater:
 
         print("5. 연동 중: 구글 캘린더...")
         # 캘린더도 동일 날짜 중복 이벤트를 피하기 위해 제목에 날짜 포함
-        cal_title = f"[{self.target_date}] 투자일지 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
-        cal_desc = f"""## ⭐ 관심종목 브리핑
+        if is_weekend:
+            # 주말: 코인 정보만 표시
+            cal_title = f"[{self.target_date}] 📅 주말 (주식 시장 휴장)"
+            cal_desc = f"""## 🚫 주식 시장 휴장
+오늘은 주말입니다. 한국 및 미국 주식 시장은 휴장입니다.
+
+## ⭐ 관심종목 브리핑
+{watch_summary if watch_summary else "등록된 관심종목이 없습니다."}
+
+## 🪙 코인 시장 (24/7 거래)
+{major_summary if market_all else "코인 데이터를 수집하지 못했습니다."}
+
+## 🔗 상세 내용 보기
+[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})
+"""
+        else:
+            # 평일: 전체 정보 표시
+            cal_title = f"[{self.target_date}] 투자일지 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+            cal_desc = f"""## ⭐ 관심종목 브리핑
 {watch_summary if watch_summary else "등록된 관심종목이 없습니다."}
 
 ## 📈 핵심 시장 지표
