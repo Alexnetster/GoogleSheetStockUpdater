@@ -356,11 +356,26 @@ class StockDataUpdater:
 
             # 3. 직접 메타데이터 조회 (접근 가능 여부 최종 확인)
             print(f"4. Testing direct access to: {CALENDAR_ID}")
-            cal_info = self.calendar_service.calendars().get(calendarId=CALENDAR_ID).execute()
-            print(f"5. CALENDAR_ID '{CALENDAR_ID}' accessible: YES (Summary: {cal_info.get('summary')})")
+            try:
+                cal_info = self.calendar_service.calendars().get(calendarId=CALENDAR_ID).execute()
+                print(f"5. CALENDAR_ID '{CALENDAR_ID}' accessible: YES (Summary: {cal_info.get('summary')})")
+            except Exception as get_e:
+                print(f"5. Direct access to '{CALENDAR_ID}' FAILED: {str(get_e)}")
+                
+                # 4. 강제 구독 시도 (CalendarList.insert)
+                print(f"6. Attempting to 'subscribe' (insert) calendar '{CALENDAR_ID}' to SA's list...")
+                try:
+                    self.calendar_service.calendarList().insert(body={'id': CALENDAR_ID}).execute()
+                    print("7. Calendar subscription: SUCCESS! (Now it should be visible)")
+                except Exception as ins_e:
+                    print(f"7. Calendar subscription FAILED: {str(ins_e)}")
+                    if "forbidden" in str(ins_e).lower():
+                        print("HINT: This is a PERMISSION issue. Likely your domain admin (Workspace) blocks external sharing.")
+                    elif "notFound" in str(ins_e).lower():
+                        print("HINT: This is an ID/Typo issue. The calendar ID doesn't exist.")
 
         except Exception as e:
-            print(f"DIAGNOSTIC_ERROR: {str(e)}")
+            print(f"DIAGNOSTIC_ERROR: Unexpected error during diagnostic: {str(e)}")
         print("------------------------------------\n")
 
         if CALENDAR_ID == 'primary':
