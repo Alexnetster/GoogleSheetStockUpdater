@@ -9,6 +9,10 @@ on:
     - cron: '0 7 * * *'
     # 미국 및 코인 마감 후: 09시 KST = 00시 UTC
     - cron: '0 0 * * *'
+    # NXT 한주 소식 시작 (모닝브리핑): 08:01 KST = 23:01 UTC (전일)
+    - cron: '1 23 * * *'
+    # NXT 및 전체 마감 (이브닝브리핑): 20:01 KST = 11:01 UTC
+    - cron: '1 11 * * *'
   workflow_dispatch:
     inputs:
       target_date:

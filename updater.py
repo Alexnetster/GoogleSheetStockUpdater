@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v1.4.0_20260110"
+VERSION = "v2.1.0_20260111"
 
 # 특이종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -108,7 +108,7 @@ class StockDataUpdater:
         for ticker, name in indices.items():
             try:
                 stock = yf.Ticker(ticker)
-                hist = stock.history(start=start_date, end=end_date)
+                hist = stock.history(start=start_date, end=end_date, prepost=True)
                 if hist.empty: continue
                 
                 # target_date 이하의 가장 최신 행 찾기
@@ -146,7 +146,7 @@ class StockDataUpdater:
                     sym = f"{ticker}-USD"
                 
                 stock = yf.Ticker(sym)
-                hist = stock.history(start=start_date, end=end_date)
+                hist = stock.history(start=start_date, end=end_date, prepost=True)
                 if hist.empty: continue
                 
                 # target_date 이하의 최신 데이터
@@ -424,6 +424,13 @@ class StockDataUpdater:
         is_kr_open = (kospi_date == self.target_date.isoformat())
         is_us_open = (sp500_date == self.target_date.isoformat())
         
+        # NXT 시간대(08:00~20:00) 및 평일 고려 보정
+        now_kst = datetime.datetime.now()
+        if now_kst.weekday() < 5:  # 평일
+            if 8 <= now_kst.hour < 20:
+                is_kr_open = True  # NXT 가동 시간
+                print(">>> NXT Active Session detected (08:00-20:00 KST)")
+
         print(f">>> 시장 개장 상태: 한국={is_kr_open}, 미국={is_us_open}")
         
         print("3. 수집 중: 주요 마켓 데이터...")
@@ -602,19 +609,26 @@ class StockDataUpdater:
         print("5. 연동 중: 구글 캘린더...")
         # 캘린더 이벤트 제목 및 내용 생성
         
+        # 시간대별 세션 태그
+        now_kst = datetime.datetime.now()
+        session_tag = ""
+        if 7 <= now_kst.hour <= 9: session_tag = " (모닝브리핑) "
+        elif 16 <= now_kst.hour <= 18: session_tag = " (장마감리뷰) "
+        elif 19 <= now_kst.hour <= 21: session_tag = " (이브닝브리핑) "
+
         # 시장 개장 상태에 따라 제목 결정
         if is_kr_open and is_us_open:
             # 양쪽 다 개장
-            cal_title = f"투자일지 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+            cal_title = f"투자일지{session_tag}📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
         elif is_kr_open:
             # 한국만 개장
-            cal_title = f"투자일지 (미장 휴장) 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+            cal_title = f"투자일지{session_tag}(미장 휴장) 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
         elif is_us_open:
             # 미국만 개장
-            cal_title = f"투자일지 (국장 휴장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
+            cal_title = f"투자일지{session_tag}(국장 휴장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
         else:
             # 양쪽 다 휴장
-            cal_title = f"투자일지 📅 주식 시장 휴장"
+            cal_title = f"투자일지{session_tag}📅 주식 시장 휴장"
         
         # 캘린더 본문 생성
         cal_desc_parts = []

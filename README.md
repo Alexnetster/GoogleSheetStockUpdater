@@ -12,21 +12,27 @@
 
 ## 🏗️ 시스템 구조
 
+```mermaid
+graph TD
+    A["GitHub Actions (Python)"] -->|매일 자동 실행| B["데이터 수집 엔진"]
+    B -->|yfinance| C["미국 주식/지수/코인"]
+    B -->|FinanceDataReader| D["한국 주식 전수 조사"]
+    B -->|BeautifulSoup| E["네이버 증권 (특이종목)"]
+    
+    B --> F["Google Sheets API"]
+    F -->|글로벌데이터| G["오늘 시장 현황 & 주요종목"]
+    F -->|월별 일지| H["YYYY-MM 탭 (누적기록)"]
+    F -->|관심종목_관리| I["개인 맞춤형 Watchlist"]
+    
+    B --> J["Google Calendar API"]
+    J -->|투자일지 생성| K["개인 캘린더 (모바일 연동)"]
 ```
-┌─────────────────────┐
-│  GitHub Actions     │  ← 매일 자동 실행 (서버리스)
-│  (Python 환경)      │
-└──────────┬──────────┘
-           │
-           ├─► 📈 데이터 수집 (yfinance, FinanceDataReader)
-           │
-           ├─► 📊 Google Sheets 업데이트
-           │   ├─ 글로벌데이터 (시장 현황 + 주요 종목)
-           │   └─ 월별 일지 (YYYY-MM 탭)
-           │
-           └─► 📅 Google Calendar 이벤트 생성
-               └─ 일일 투자 일지
-```
+
+### 시스템 계층 구조
+1.  **데이터 레이어 (Google Sheets)**: 글로벌데이터, 스크리너, 이벤트, 관심종목_관리
+2.  **연산 레이어 (Python/Github Actions)**: 수집, 분석(특이종목/추천의견), 포맷팅
+3.  **UI 레이어 (Calendar/Sheets)**: 일별 요약 이벤트, 실시간 시트 뷰어
+4.  **아카이빙 레이어 (Sheets)**: 월별 투자 기록 자동 보관
 
 ## ⚙️ 동작 환경
 
@@ -71,36 +77,29 @@
    - `SPREADSHEET_ID`: 구글 시트 ID
    - `CALENDAR_ID`: 구글 캘린더 ID
 
-## 📊 데이터 구조
+### 1. 글로벌데이터 (Live Status)
+| 섹션 | 설명 |
+| :--- | :--- |
+| **Market Summary** | 지수(KOSPI, S&P500 등) 및 환율 실시간 변동현황 |
+| **주요 종목 데이터** | 설정된 주요 종목(AAPL, NVDA, 삼성전자 등)의 현재가 및 시총 |
 
-### 글로벌데이터 시트
+### 2. 관심종목_관리 (User Input)
+사용자가 직접 관리하는 시트로, 프로그램이 가격과 의견을 자동으로 업데이트합니다.
+- **컬럼**: `Country`, `Ticker`, `Name`, `Asset`, `Memo`, `Alert_Price`, `Recommendation`, `Expert_Opinion`
+- **자동 업데이트**: `Recommendation` (시스템 추천가), `Expert_Opinion` (전문가 의견)
 
-```
-=== 📊 Market Summary ===
-번호 | 국가 | 거래소   | 지수      | 변동폭
-1    | 한국 | KOSPI    | 4,586.3   | +0.75%
-2    | 한국 | KOSDAQ   | 947.9     | +0.41%
-3    | 미국 | S&P500   | 6,966.3   | +0.65%
-4    | 미국 | NASDAQ   | 23,671.3  | +0.81%
-5    | 환율 | USD/KRW  | 1,450.1   | +0.27%
-
-=== 📈 주요 종목 데이터 ===
-Asset | Ticker | Name | Price | ChangeRate | Volume | MarketCap | Update
-```
-
-### 월별 일지 (YYYY-MM 탭)
-
-```
-Date       | Market Summary        | Watchlist Status | Unusual Stocks | Version
-2026-01-09 | KR: KOSPI +0.75%...  | N/A              | [주요종목]...  | v1.4.0
-```
+### 3. 월별 일지 (History Archive)
+매월 `YYYY-MM` 형식의 탭이 자동 생성되며, 시장 요약과 특이 종목이 기록됩니다.
+- **컬럼**: `Date`, `Market Summary`, `Watchlist Status`, `Unusual Stocks`, `Version`
 
 ## 🔄 자동 실행 스케줄
 
 GitHub Actions는 다음 시간에 자동 실행됩니다 (한국 시간 기준):
 
-- **매일 오전 9시**: 장 시작 전 데이터 수집
-- **매일 오후 4시**: 장 마감 후 데이터 수집
+- **오전 08:01**: NXT 시작 및 모닝 브리핑 (미국장 마감 결과 포함)
+- **오전 09:00**: 정규장 시작 전 데이터 수집
+- **오후 16:00**: 정규장 마감 후 데이터 수집
+- **오후 20:01**: NXT 마감 및 이브닝 브리핑 (미국 프리마켓 포함)
 
 > 스케줄 변경: `.github/workflows/daily_sync.yml` 파일의 `cron` 설정 수정
 
@@ -169,3 +168,16 @@ GoogleSheetStockUpdater/
 ## 📄 라이선스
 
 MIT License
+
+
+
+==== 아래는 수정하지 마시오.
+https://docs.google.com/spreadsheets/d/SHEET_ID/edit?gid=0#gid=0
+tradingSystem2026 시트에 탭은 다음과 같이 구성 되어 있다. 글로벌데이터, @스크리너, @이벤트, @PnL로그 
+
+A1: 티커	B1:종목명	C1: 거래소	D1: 종가	E1: 거래대금	F1: PER	G1: 시장	H1: 자동티커	G1: NASDAQ TOP
+KRX:005930	삼성전자	코스피	#N/A	#N/A			Samsung Electronics Co Ltd	#N/A
+=IFERROR(INDEX(SPLIT(IMPORTXML("https://finance.naver.com/item/main.naver?code="&RIGHT(A2,6),"//title"), " :"),1),"unknown")
+=IFERROR(INDEX(IMPORTXML("https://finance.naver.com/item/main.naver?code="&SUBSTITUTE(A2,":",""),"//span[contains(text(),'코스피') or contains(text(),'KOSPI')]"),1),"KOSDAQ")
+=GOOGLEFINANCE(A2, "price")
+=GOOGLEFINANCE(A2, "volume") * GOOGLEFINANCE(A2, "price")
