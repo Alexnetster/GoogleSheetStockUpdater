@@ -391,74 +391,74 @@ class StockDataUpdater:
 
     def create_calendar_event(self, title, description):
         # 마스킹 방지 및 오타 확인을 위한 상세 출력
-        id_display = "|".join(list(CALENDAR_ID))
-        print(f"DEBUG: CALENDAR_ID Raw Check: [{id_display}] (Length: {len(CALENDAR_ID)})")
+        # id_display = "|".join(list(CALENDAR_ID))
+        # print(f"DEBUG: CALENDAR_ID Raw Check: [{id_display}] (Length: {len(CALENDAR_ID)})")
         
-        print("\n--- [Calendar Access Diagnostic] ---")
-        try:
-            # 1. 접근 가능한 캘린더 목록 출력
-            cal_list = self.calendar_service.calendarList().list().execute()
-            items = cal_list.get('items', [])
-            accessible_ids = [item.get('id') for item in items]
-            print(f"1. Accessible calendars: {accessible_ids}")
-
-            # 1-1. 서비스 계정 본인의 'primary' 캘린더 정보 조회 테스트 (API 활성화 확인용)
-            try:
-                self.calendar_service.calendars().get(calendarId='primary').execute()
-                print("2. SA's primary calendar access: SUCCESS (API is ENABLED)")
-            except Exception as sa_e:
-                print(f"2. SA's primary calendar access: FAILED ({str(sa_e)}) -> API might be DISABLED in GCP console.")
-
-            # 2. CALENDAR_ID가 목록에 있는지 확인
-            if CALENDAR_ID in accessible_ids:
-                print(f"3. CALENDAR_ID '{CALENDAR_ID}' is in service account's list: YES")
-            else:
-                print(f"3. CALENDAR_ID '{CALENDAR_ID}' is NOT in list. Direct access test needed.")
-
-            # 3. 직접 메타데이터 조회 (접근 가능 여부 최종 확인)
-            print(f"4. Testing direct access to: {CALENDAR_ID}")
-            try:
-                cal_info = self.calendar_service.calendars().get(calendarId=CALENDAR_ID).execute()
-                print(f"5. CALENDAR_ID '{CALENDAR_ID}' accessible: YES (Summary: {cal_info.get('summary')})")
-            except Exception as get_e:
-                print(f"5. Direct access to '{CALENDAR_ID}' FAILED: {str(get_e)}")
-                
-                # 4. 강제 구독 시도 (CalendarList.insert)
-                print(f"6. Attempting to 'subscribe' (insert) calendar '{CALENDAR_ID}' to SA's list...")
-                try:
-                    self.calendar_service.calendarList().insert(body={'id': CALENDAR_ID}).execute()
-                    print("7. Calendar subscription: SUCCESS! (Now it should be visible)")
-                except Exception as ins_e:
-                    print(f"7. Calendar subscription FAILED: {str(ins_e)}")
-                    if "forbidden" in str(ins_e).lower():
-                        print("HINT: This is a PERMISSION issue. Likely your domain admin (Workspace) blocks external sharing.")
-                    elif "notFound" in str(ins_e).lower():
-                        print("HINT: This is an ID/Typo issue. The calendar ID doesn't exist.")
-
-        except Exception as e:
-            print(f"DIAGNOSTIC_ERROR: Unexpected error during diagnostic: {str(e)}")
-        print("------------------------------------\n")
-
-        if CALENDAR_ID == 'primary':
-            print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar.")
+        # print("\n--- [Calendar Access Diagnostic] ---")
+        # try:
+        #     # 1. 접근 가능한 캘린더 목록 출력
+        #     cal_list = self.calendar_service.calendarList().list().execute()
+        #     items = cal_list.get('items', [])
+        #     accessible_ids = [item.get('id') for item in items]
+        #     print(f"1. Accessible calendars: {accessible_ids}")
+        # 
+        #     # 1-1. 서비스 계정 본인의 'primary' 캘린더 정보 조회 테스트 (API 활성화 확인용)
+        #     try:
+        #         self.calendar_service.calendars().get(calendarId='primary').execute()
+        #         print("2. SA's primary calendar access: SUCCESS (API is ENABLED)")
+        #     except Exception as sa_e:
+        #         print(f"2. SA's primary calendar access: FAILED ({str(sa_e)}) -> API might be DISABLED in GCP console.")
+        # 
+        #     # 2. CALENDAR_ID가 목록에 있는지 확인
+        #     if CALENDAR_ID in accessible_ids:
+        #         print(f"3. CALENDAR_ID '{CALENDAR_ID}' is in service account's list: YES")
+        #     else:
+        #         print(f"3. CALENDAR_ID '{CALENDAR_ID}' is NOT in list. Direct access test needed.")
+        # 
+        #     # 3. 직접 메타데이터 조회 (접근 가능 여부 최종 확인)
+        #     print(f"4. Testing direct access to: {CALENDAR_ID}")
+        #     try:
+        #         cal_info = self.calendar_service.calendars().get(calendarId=CALENDAR_ID).execute()
+        #         print(f"5. CALENDAR_ID '{CALENDAR_ID}' accessible: YES (Summary: {cal_info.get('summary')})")
+        #     except Exception as get_e:
+        #         print(f"5. Direct access to '{CALENDAR_ID}' FAILED: {str(get_e)}")
+        #         
+        #         # 4. 강제 구독 시도 (CalendarList.insert)
+        #         print(f"6. Attempting to 'subscribe' (insert) calendar '{CALENDAR_ID}' to SA's list...")
+        #         try:
+        #             self.calendar_service.calendarList().insert(body={'id': CALENDAR_ID}).execute()
+        #             print("7. Calendar subscription: SUCCESS! (Now it should be visible)")
+        #         except Exception as ins_e:
+        #             print(f"7. Calendar subscription FAILED: {str(ins_e)}")
+        #             if "forbidden" in str(ins_e).lower():
+        #                 print("HINT: This is a PERMISSION issue. Likely your domain admin (Workspace) blocks external sharing.")
+        #             elif "notFound" in str(ins_e).lower():
+        #                 print("HINT: This is an ID/Typo issue. The calendar ID doesn't exist.")
+        # 
+        # except Exception as e:
+        #     print(f"DIAGNOSTIC_ERROR: Unexpected error during diagnostic: {str(e)}")
+        # print("------------------------------------\n")
+        # 
+        # if CALENDAR_ID == 'primary':
+        #     print("WARNING: CALENDAR_ID is set to 'primary'. This points to the Service Account's own calendar.")
 
         # 해당 날짜의 기존 이벤트 검색 및 삭제 (중복 방지)
         search_start = (self.target_date - datetime.timedelta(days=1)).isoformat() + "T00:00:00Z"
         search_end = (self.target_date + datetime.timedelta(days=2)).isoformat() + "T00:00:00Z"
         
         try:
-            print(f"DEBUG: Searching events between {search_start} and {search_end}")
+            # print(f"DEBUG: Searching events between {search_start} and {search_end}")
             events_result = self.calendar_service.events().list(
                 calendarId=CALENDAR_ID, timeMin=search_start, timeMax=search_end,
                 singleEvents=True, orderBy='startTime'
             ).execute()
             events = events_result.get('items', [])
-            print(f"DEBUG: Found {len(events)} events in range.")
+            # print(f"DEBUG: Found {len(events)} events in range.")
             
             for ev in events:
                 ev_date = ev.get('start', {}).get('date')
                 if ev_date == self.target_date.isoformat() and "투자일지" in ev.get('summary', ''):
-                    print(f"DEBUG: Found matching event to delete: {ev.get('summary')} (ID: {ev.get('id')})")
+                    # print(f"DEBUG: Found matching event to delete: {ev.get('summary')} (ID: {ev.get('id')})")
                     self.calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=ev['id']).execute()
                     print(f"Successfully deleted existing event.")
 
