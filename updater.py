@@ -330,30 +330,36 @@ class StockDataUpdater:
 
     def create_calendar_event(self, title, description):
         # 해당 날짜의 기존 이벤트 검색 및 삭제 (중복 방지)
-        time_min = datetime.datetime.combine(self.target_date, datetime.time.min).isoformat() + 'Z'
-        time_max = datetime.datetime.combine(self.target_date, datetime.time.max).isoformat() + 'Z'
+        # 검색 범위: 대상 날짜의 전일 15시(UTC) ~ 익일 15시(UTC)를 포함하도록 넉넉히 지정
+        search_start = (self.target_date - datetime.timedelta(days=1)).isoformat() + "T00:00:00Z"
+        search_end = (self.target_date + datetime.timedelta(days=2)).isoformat() + "T00:00:00Z"
         
         try:
             events_result = self.calendar_service.events().list(
-                calendarId=CALENDAR_ID, timeMin=time_min, timeMax=time_max,
+                calendarId=CALENDAR_ID, timeMin=search_start, timeMax=search_end,
                 singleEvents=True, orderBy='startTime'
             ).execute()
             events = events_result.get('items', [])
             
             for ev in events:
-                if "투자일지" in ev.get('summary', ''):
+                # 'date' 키가 있으면 All-day 이벤트
+                ev_date = ev.get('start', {}).get('date')
+                if ev_date == self.target_date.isoformat() and "투자일지" in ev.get('summary', ''):
                     self.calendar_service.events().delete(calendarId=CALENDAR_ID, eventId=ev['id']).execute()
-                    print(f"Deleted existing calendar event: {ev['summary']}")
+                    print(f"Deleted existing calendar event: {ev['summary']} on {ev_date}")
 
-            # 새 이벤트 생성
+            # 새 이벤트 생성 준비
+            # All-day 이벤트는 종료일(end['date'])이 다음 날(exclusive)이어야 함
+            next_day = (self.target_date + datetime.timedelta(days=1)).isoformat()
+            
             event = {
                 'summary': title,
                 'description': description,
                 'start': {'date': self.target_date.isoformat(), 'timeZone': 'Asia/Seoul'},
-                'end': {'date': self.target_date.isoformat(), 'timeZone': 'Asia/Seoul'},
+                'end': {'date': next_day, 'timeZone': 'Asia/Seoul'},
             }
             self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-            print(f"Created new calendar event: {title}")
+            print(f"Created new calendar event: {title} (Range: {self.target_date} ~ {next_day})")
         except Exception as e:
             print(f"Error updating calendar event: {e}")
 
