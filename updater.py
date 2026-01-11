@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.6.5_20260111"
+VERSION = "v2.6.7_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -110,11 +110,11 @@ class StockDataUpdater:
             for r in all_records:
                 # Use robust key matching for localization
                 category = str(r.get('카테고리', r.get('Category', ''))).strip().lower()
-                if category in ['index', '지수']:
+                if category in ['index', '지수', 'exchange', '환율']:
                     ticker = str(r.get('티커', r.get('Ticker', ''))).strip()
                     name = str(r.get('종목명', r.get('Name', ''))).strip()
                     if ticker and name:
-                        index_map[ticker] = name
+                        index_map[ticker] = {'name': name, 'category': category}
         except:
             pass
 
@@ -128,7 +128,9 @@ class StockDataUpdater:
         end_date = self.target_date + datetime.timedelta(days=1)
         start_date = self.target_date - datetime.timedelta(days=10)
         
-        for ticker, name in index_map.items():
+        for ticker, info in index_map.items():
+            name = info['name']
+            cat = info['category']
             try:
                 stock = yf.Ticker(ticker)
                 hist = stock.history(start=start_date, end=end_date, prepost=True)
@@ -146,7 +148,8 @@ class StockDataUpdater:
                     'price': curr['Close'],
                     'change': change,
                     'rate': change_rate,
-                    'date': curr.name.date().isoformat()
+                    'date': curr.name.date().isoformat(),
+                    'category': cat
                 }
             except Exception as e:
                 print(f"Error fetching index {name} ({ticker}): {e}")
@@ -328,35 +331,54 @@ class StockDataUpdater:
             
             rows.append([])
         
-        # 주요 종목 데이터 섹션 (구분: Major vs Crypto vs Watchlist)
-        categories_to_display = [('Major', '주요종목'), ('Crypto', '코인'), ('Watchlist', '관심종목')]
-        for cat_id, cat_name in categories_to_display:
-            # 보강된 필터링: blank, '관심종목' -> Watchlist / '주요종목' -> Major
-            def is_match(d_cat, target_id):
-                clean_cat = str(d_cat).strip().lower()
-                if not clean_cat: clean_cat = 'watchlist' # 기본값
-                
-                # 한글 매핑
-                mapping = {'지수': 'index', '주요종목': 'major', '관심종목': 'watchlist', '코인': 'crypto'}
-                translated_cat = mapping.get(clean_cat, clean_cat)
-                
-                return translated_cat == target_id.lower()
+        # 주요 종목 데이터 섹션 (v2.6.7: 3대 체제 및 국가별 세분화)
+        # 1. 주요종목 ([주요종목:한국], [주요종목:미국], [주요종목:코인])
+        major_data = [d for d in data if str(d.get('Category', d.get('카테고리', ''))).lower() in ['major', '주요종목']]
+        if major_data:
+            rows.append(['=== 📌 [주요종목] ===', '', '', '', '', '', ''])
+            for a_code, a_name in [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]:
+                subset = [d for d in major_data if d.get('Asset') == a_code]
+                if subset:
+                    rows.append([f'[{a_name}]', '티커', '종목명', '현재가', '변동률', '거래량', '시총'])
+                    for d in subset:
+                        rows.append([
+                            '', d['Ticker'], d['Name'], 
+                            d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
+                            self._format_large_number(d['Volume']), 
+                            self._format_large_number(d['MarketCap'])
+                        ])
+            rows.append([])
 
-            cat_data = [d for d in data if is_match(d.get('Category', d.get('카테고리', '')), cat_id)]
-            if not cat_data: continue
-            
-            rows.append([f'=== [{cat_name}] ===', '', '', '', '', '', ''])
-            header = ['자산', '티커', '종목명', '현재가', '변동률', '거래량', '시총']
-            rows.append(header)
-            
-            for d in cat_data:
+        # 2. 코인 전용 섹션 (Major에 포함되지 않은 일반 코인들)
+        crypto_data = [d for d in data if str(d.get('Category', d.get('카테고리', ''))).lower() in ['crypto', '코인'] and d not in major_data]
+        if crypto_data:
+            rows.append(['=== 🪙 [코인] ===', '', '', '', '', '', ''])
+            rows.append(['자산', '티커', '종목명', '현재가', '변동률', '거래량', '시총'])
+            for d in crypto_data:
                 rows.append([
                     d['Asset'], d['Ticker'], d['Name'], 
                     d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
                     self._format_large_number(d['Volume']), 
                     self._format_large_number(d['MarketCap'])
                 ])
-            rows.append([]) # 섹션 간 빈 줄
+            rows.append([])
+
+        # 3. 관심종목 ([관심종목:한국], [관심종목:미국])
+        watch_data_all = [d for d in data if d not in major_data and d not in crypto_data]
+        if watch_data_all:
+            rows.append(['=== ⭐ [관심종목] ===', '', '', '', '', '', ''])
+            for a_code, a_name in [('KR', '한국'), ('US', '미국')]:
+                subset = [d for d in watch_data_all if d.get('Asset') == a_code]
+                if subset:
+                    rows.append([f'[{a_name}]', '티커', '종목명', '현재가', '변동률', '거래량', '시총'])
+                    for d in subset:
+                        rows.append([
+                            '', d['Ticker'], d['Name'], 
+                            d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
+                            self._format_large_number(d['Volume']), 
+                            self._format_large_number(d['MarketCap'])
+                        ])
+            rows.append([])
         
         # 시트 업데이트 (gspread v6+ 대응: 명시적 인자 사용)
         ws.clear()
@@ -504,7 +526,7 @@ class StockDataUpdater:
                 if found_ticker:
                     key = (asset_type, found_ticker)
                     
-                    if enabled:
+                    if enabled and found_ticker:
                         if key in processed_keys:
                             print(f"Skipping duplicate request: {key}")
                             continue
@@ -529,7 +551,22 @@ class StockDataUpdater:
                                 asset_type, found_ticker, name_display, category, "", memo, "", "", "", ""
                             ])
                             mgmt_keys.add(key)
+                        else:
+                            # 기존 종목인 경우 카테고리 등 기본 정보 업데이트 (v2.6.6)
+                            mgmt_header = mgmt_ws.row_values(1)
+                            cat_col = mgmt_header.index('카테고리') + 1 if '카테고리' in mgmt_header else 4
+                            
+                            current_cat = existing_item.get('카테고리', existing_item.get('Category', ''))
+                            if current_cat != category:
+                                # 행 번호 찾기 (all_cells 기준)
+                                mgmt_all_values = mgmt_ws.get_all_values()
+                                for idx, row in enumerate(mgmt_all_values[1:], start=2):
+                                    if row[0] == asset_type and self._normalize_ticker(row[1], asset_type) == found_ticker:
+                                        mgmt_ws.update_cell(idx, cat_col, category)
+                                        print(f"Updated category for {found_ticker}: {category}")
+                                        break
                     else:
+                        # 비활성화 이거나 검색결과가 FALSE인 경우 삭제 (v2.6.6)
                         if key in mgmt_keys:
                             keys_to_remove.add(key)
                             if key in mgmt_keys: mgmt_keys.remove(key)
@@ -640,6 +677,13 @@ class StockDataUpdater:
         
         is_kr_open = (kospi_date == self.target_date.isoformat())
         is_us_open = (sp500_date == self.target_date.isoformat())
+        
+        # [v2.6.7] 과거 날짜 요청 시 최종 마감 모드 강제 및 지수/코인 필수 포함 보장
+        if manual_date:
+            print(f">>> [Historical Sync] {self.target_date} 데이터의 최종 마감 상태를 기록합니다.")
+            # 과거 날짜는 이미 장이 끝났으므로 모든 정보 수집 허용
+            is_kr_open = True if kospi_date else is_kr_open
+            is_us_open = True if sp500_date else is_us_open
         
         # 모드별 수집 시장 강제 조정
         if mode == "MORNING":
@@ -799,12 +843,14 @@ class StockDataUpdater:
         # 요약 생성 - Market Summary (지수 동적 생성)
         market_summary_lines = []
         # 지수들을 국가별로 묶어서 표시 시도
-        kr_indices = [f"{k} {v['rate']:+.2f}%" for k, v in indices.items() if k in ['KOSPI', 'KOSDAQ']]
-        us_indices = [f"{k} {v['rate']:+.2f}%" for k, v in indices.items() if k in ['S&P500', 'NASDAQ', 'Dow Jones']]
-        other_indices = [f"{k} {v['price']:,.1f} ({v['change']:+.1f})" for k, v in indices.items() if k not in ['KOSPI', 'KOSDAQ', 'S&P500', 'NASDAQ', 'Dow Jones']]
+        kr_indices = [f"{k} {v['rate']:+.2f}%" for k, v in indices.items() if v.get('category') in ['index', '지수'] and k in ['KOSPI', 'KOSDAQ']]
+        us_indices = [f"{k} {v['rate']:+.2f}%" for k, v in indices.items() if v.get('category') in ['index', '지수'] and k in ['S&P500', 'NASDAQ', 'Dow Jones']]
+        ex_indices = [f"{k} {v['price']:,.1f} ({v['change']:+.1f})" for k, v in indices.items() if v.get('category') in ['exchange', '환율']]
+        other_indices = [f"{k} {v['price']:,.1f} ({v['change']:+.1f})" for k, v in indices.items() if v.get('category') not in ['index', '지수', 'exchange', '환율']]
 
-        if kr_indices: market_summary_lines.append(f"KR: {', '.join(kr_indices)}")
-        if us_indices: market_summary_lines.append(f"US: {', '.join(us_indices)}")
+        if kr_indices: market_summary_lines.append(f"KR 지수: {', '.join(kr_indices)}")
+        if us_indices: market_summary_lines.append(f"US 지수: {', '.join(us_indices)}")
+        if ex_indices: market_summary_lines.append(f"환율: {', '.join(ex_indices)}")
         if other_indices: market_summary_lines.append(f"기타: {', '.join(other_indices)}")
         
         market_summary = "\n".join(market_summary_lines) or "N/A"
@@ -827,56 +873,48 @@ class StockDataUpdater:
         
         watch_summary = "\n".join(watch_summary_lines)
         
-        unusual_summary_lines = []
-        # 1. [주요종목] 섹션 (시트에서 'Major'로 태깅된 것만 표시)
+        # [v2.6.7] 리포트 3대 체제 ([주요종목], [관심종목], [특이종목]) 재편
+        print("4.5. 리포트 본문 생성 중 (3대 체제)...")
+        report_lines = []
+        
+        # 1. [주요종목] 섹션
         major_list = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
         if major_list:
-            asset_types = [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]
-            for a_code, a_name in asset_types:
+            report_lines.append("=== [주요종목] ===")
+            for a_code, a_name in [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]:
                 subset = [d for d in major_list if d.get('Asset') == a_code and d.get('Price', 0) > 0]
                 if subset:
-                    unusual_summary_lines.append(f"[주요종목:{a_name}]")
+                    report_lines.append(f"[주요종목:{a_name}]")
                     for d in subset:
-                        unusual_summary_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-                    unusual_summary_lines.append("")
+                        report_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+                    report_lines.append("")
 
-        # 2. [주의종목:네이버증권]
+        # 2. [관심종목] 섹션
+        watch_list = [d for d in market_all if str(d.get('Category', '')).lower() not in ['major', 'crypto', 'index', 'exchange']]
+        if watch_list:
+            report_lines.append("=== [관심종목] ===")
+            for a_code, a_name in [('KR', '한국'), ('US', '미국')]:
+                subset = [d for d in watch_list if d.get('Asset') == a_code and d.get('Price', 0) > 0]
+                if subset:
+                    report_lines.append(f"[관심종목:{a_name}]")
+                    for d in subset:
+                        rec_part = f" [{d['FinalRecommendation']}]" if d['FinalRecommendation'] != "-" else ""
+                        report_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%){rec_part}")
+                    report_lines.append("")
+
+        # 3. [특이종목] 섹션 (Scraped)
         if unusual:
-            naver_total = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
-            if naver_total:
-                unusual_summary_lines.append("[주의종목:네이버증권]")
-                for region in ['한국', '미국']:
-                    asset_prefix = 'KR' if region == '한국' else 'US'
-                    region_stocks = [d for d in naver_total if d.get('Asset') == asset_prefix]
-                    if region_stocks:
-                        unusual_summary_lines.append(f"<{region}>")
-                        for d in region_stocks[:10]:
-                            category = d.get('Category', '기타')
-                            unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-                unusual_summary_lines.append("")
-            
-            # 3. [주의종목:자체분석]
-            internal_total = [d for d in unusual if d.get('Source') == 'Internal' and d.get('Price', 0) > 0]
-            if internal_total:
-                unusual_summary_lines.append("[주의종목:자체분석]")
-                for region in ['한국', '미국']:
-                    asset_prefix = 'KR' if region == '한국' else 'US'
-                    region_stocks = [d for d in internal_total if d.get('Asset') == asset_prefix]
-                    if region_stocks:
-                        unusual_summary_lines.append(f"<{region}>")
-                        for d in region_stocks[:5]:
-                            reason = "급등락" if abs(d['ChangeRate']) >= UNUSUAL_CHANGE_RATE else "거래량급증"
-                            unusual_summary_lines.append(f"[{reason}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-        
-        unusual_summary = "\n".join(unusual_summary_lines) if unusual_summary_lines else "N/A"
+            report_lines.append("=== [특이종목] ===")
+            for a_code, a_name in [('KR', '한국'), ('US', '미국')]:
+                subset = [d for d in unusual if d.get('Asset') == a_code and d.get('Price', 0) > 0]
+                if subset:
+                    report_lines.append(f"[특이종목:네이버/FDR수집:{a_name}]")
+                    for d in subset[:10]:
+                        source_tag = f"[{d.get('Source', '주의')}]" if d.get('Source') != 'Internal' else "[급변]"
+                        report_lines.append(f"{source_tag} {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+                    report_lines.append("")
 
-        print("5. 기록 중: 월별 일지 (중복 체크 포함)...")
-        ws_monthly = self.get_monthly_worksheet()
-        all_dates = ws_monthly.col_values(1)
-        target_iso = self.target_date.isoformat()
-        
-        # 시트에는 주의종목만 기록 (네이버 우선 형식)
-        detailed_market_info = unusual_summary
+        detailed_market_info = "\n".join(report_lines) if report_lines else "N/A"
 
         row_data = [
             target_iso,
@@ -889,30 +927,40 @@ class StockDataUpdater:
 
         if target_iso in all_dates:
             row_idx = all_dates.index(target_iso) + 1
-            existing_row = ws_monthly.row_values(row_idx)
-            
-            # 데이터 병합 로직 (기존 데이터가 "N/A"가 아니면 유지하고 현재 데이터와 병합)
-            # Market Summary 병합
-            new_market = row_data[1]
-            old_market = existing_row[1] if len(existing_row) > 1 else ""
-            merged_market = self._merge_report_sections(old_market, new_market, ["KR:", "US:", "환율:"])
-            
-            # Watchlist Status 병합
-            new_watch = row_data[2]
-            old_watch = existing_row[2] if len(existing_row) > 2 else ""
-            merged_watch = self._merge_report_sections(old_watch, new_watch, ["KR:", "US:", "Coin:"])
-            
-            # Unusual Stocks 병합 (주의종목)
-            new_unusual = row_data[3]
-            old_unusual = existing_row[3] if len(existing_row) > 3 else ""
-            merged_unusual = self._merge_report_sections(old_unusual, new_unusual, ["[주요종목:한국]", "[주요종목:미국]", "[주요종목:코인]", "[주의종목:네이버증권]", "[주의종목:자체분석]"])
+            if manual_date:
+                # [v2.6.7] 과거 날짜 요청 시 덮어쓰기 (최종본 정책)
+                ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
+                print(f"Overwritten (Final State) for past date: {target_iso}.")
+            else:
+                existing_row = ws_monthly.row_values(row_idx)
+                
+                # 데이터 병합 로직 (기존 데이터가 "N/A"가 아니면 유지하고 현재 데이터와 병합)
+                # Market Summary 병합
+                new_market = row_data[1]
+                old_market = existing_row[1] if len(existing_row) > 1 else ""
+                merged_market = self._merge_report_sections(old_market, new_market, ["KR 지수:", "US 지수:", "환율:"])
+                
+                # Watchlist Status 병합
+                new_watch = row_data[2]
+                old_watch = existing_row[2] if len(existing_row) > 2 else ""
+                merged_watch = self._merge_report_sections(old_watch, new_watch, ["KR:", "US:", "Coin:"])
+                
+                # Detailed Info 병합 (마커 기반)
+                new_detailed = row_data[3]
+                old_detailed = existing_row[3] if len(existing_row) > 3 else ""
+                markers = [
+                    "[주요종목:한국]", "[주요종목:미국]", "[주요종목:코인]",
+                    "[관심종목:한국]", "[관심종목:미국]",
+                    "[특이종목:네이버/FDR수집:한국]", "[특이종목:네이버/FDR수집:미국]"
+                ]
+                merged_detailed = self._merge_report_sections(old_detailed, new_detailed, markers)
 
-            row_data[1] = merged_market
-            row_data[2] = merged_watch
-            row_data[3] = merged_unusual
-            
-            ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
-            print(f"Updated and Merged row for {target_iso}.")
+                row_data[1] = merged_market
+                row_data[2] = merged_watch
+                row_data[3] = merged_detailed
+                
+                ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
+                print(f"Updated and Merged row for {target_iso}.")
         else:
             ws_monthly.append_row(row_data)
             print(f"Appended new row for {target_iso}.")

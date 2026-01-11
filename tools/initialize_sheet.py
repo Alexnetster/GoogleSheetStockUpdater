@@ -35,7 +35,7 @@ DEFAULT_BOOTSTRAP_DATA = [
     ['^KQ11', 'KOSDAQ', 'Index', '국내 코스닥 지수', 'TRUE', 'TRUE'],
     ['^GSPC', 'S&P500', 'Index', '미국 S&P500 지수', 'TRUE', 'TRUE'],
     ['^IXIC', 'NASDAQ', 'Index', '미국 나스닥 지수', 'TRUE', 'TRUE'],
-    ['USDKRW=X', 'USD/KRW', 'Index', '원/달러 환율', 'TRUE', 'TRUE'],
+    ['USDKRW=X', 'USD/KRW', 'Exchange', '원/달러 환율', 'TRUE', 'TRUE'],
     # Major Stocks
     ['005930', '삼성전자', 'Major', '국내 시총 1위', 'TRUE', 'TRUE'],
     ['000660', 'SK하이닉스', 'Major', '국내 반도체 주요', 'TRUE', 'TRUE'],
