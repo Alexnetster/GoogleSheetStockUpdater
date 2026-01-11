@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.6.1_20260111"
+VERSION = "v2.6.3_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -583,7 +583,7 @@ class StockDataUpdater:
     def get_monthly_worksheet(self):
         """월별 탭 관리 및 반환 (target_date 기준)"""
         tab_name = self.target_date.strftime('%Y-%m')
-        headers = ['날짜', '시장 요약', '관심종목 현황', '주의종목', '버전']
+        headers = ['날짜', '시장 요약', '관심종목 현황', '주의종목', '갱신날짜']
         
         try:
             ws = self.sh.worksheet(tab_name)
@@ -598,7 +598,7 @@ class StockDataUpdater:
         except gspread.exceptions.WorksheetNotFound:
             # 새 시트 생성 시에만 최신 구조 적용
             ws = self.sh.add_worksheet(title=tab_name, rows=1000, cols=15)
-            ws.update('A1', [headers])
+            ws.update(values=[headers], range_name='A1')
             
             # 모든 컬럼 상단 정렬 적용
             try:
@@ -880,7 +880,7 @@ class StockDataUpdater:
             market_summary,
             watch_summary if watch_summary else "N/A",
             detailed_market_info,
-            f"{APP_NAME} {VERSION}"
+            datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         ]
 
 

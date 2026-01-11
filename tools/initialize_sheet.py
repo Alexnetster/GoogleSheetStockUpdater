@@ -93,7 +93,7 @@ def initialize(reset_mode=False):
             if current_headers != config['headers']:
                 print(f"  ! [{name}] 헤더 구버전/불일치 발견. 최신 한글 헤더로 교체합니다.")
                 # 맨 윗줄(A1)부터 헤더를 덮어씁니다. (기존 데이터는 유지됨)
-                ws.update('A1', [config['headers']])
+                ws.update(values=[config['headers']], range_name='A1')
                 print(f"  -> [{name}] 헤더 보정 완료.")
         except gspread.exceptions.WorksheetNotFound:
             print(f"[{name}] 시트 생성 중...")
@@ -108,7 +108,7 @@ def initialize(reset_mode=False):
 
     # 4. 월별 탭(YYYY-MM) 헤더 보정
     print("\n[월별 일지] 시트 점검 중...")
-    monthly_headers = ['날짜', '시장 요약', '관심종목 현황', '주의종목', '버전']
+    monthly_headers = ['날짜', '시장 요약', '관심종목 현황', '주의종목', '갱신날짜']
     for ws in sh.worksheets():
         # YYYY-MM 형식의 제목인지 확인
         title = ws.title
@@ -116,7 +116,7 @@ def initialize(reset_mode=False):
             current_headers = ws.row_values(1)
             if current_headers != monthly_headers:
                 print(f"  ! [{title}] 월별 시트 헤더 보정 완료.")
-                ws.update('A1', [monthly_headers])
+                ws.update(values=[monthly_headers], range_name='A1')
 
     # 5. 임시 시트 삭제
     if reset_mode:
