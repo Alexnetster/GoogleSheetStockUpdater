@@ -7,8 +7,9 @@
 - **제로 하드코딩 (Zero Hardcoding)**: 소스 수정 없이 시트에서 직접 지수(Index), 주요종목(Major), 관심종목(Watchlist) 관리 (v2.4.2)
 - **자동 데이터 수집**: 한국/미국 주식, 주요 지수,
 - **버전 히스토리**:
+  - v2.6.9: 로컬 검증 시스템(tools/verify_sync.py) 도입 및 데이터 싱크 정합성 강화
+  - v2.6.8: 세션 기반 '오늘' 탭 레이아웃 및 캘린더 연동 최적화 (MORNING/MIDDAY/CLOSE/EVENING)
   - v2.6.7: 리포트 3대 체제([주요/관심/특이]) 국가별 세분화 및 과거 데이터 동기화 정책 고도화
-  - v2.6.6: 'Exchange' 카테고리 고정 라벨(환율:) 및 관심종목 동기화 로직 고도화
   - v2.6.5: Crypto 전용 카테고리 도입 및 대시보드(오늘 탭) 섹션 분리
   - v2.6.4: 기록 기준 날짜 최적화 (시장 데이터 날짜 대신 실제 실행일 기준 기록)
   - v2.6.3: initialize_sheet.py 경고 제거 및 오늘 탭 검증 로직 최적화
@@ -35,7 +36,8 @@ graph TD
     F -->|관심종목_관리| I["개인 맞춤형 Watchlist"]
     
     B --> J["Google Calendar API"]
-    J -->|투자일지 생성| K["개인 캘린더 (모바일 연동)"]
+    B --> L["Local Verification Engine"]
+    L --> M["debug_logs/*.json"]
 ```
 
 ### 시스템 계층 구조

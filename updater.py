@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.6.7_20260111"
+VERSION = "v2.6.9_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -57,6 +57,13 @@ class StockDataUpdater:
             self.target_date = datetime.datetime.strptime(target_date, '%Y-%m-%d').date()
         else:
             self.target_date = target_date or datetime.date.today()
+        
+        # [v2.6.9] Local Verification Hook (Developer Only)
+        self.debug_mode = False 
+
+    def _log_payload(self, target, data):
+        """로컬 검증을 위한 내부 훅 (tools/verify_sync.py에서 오버라이드하여 사용)"""
+        pass
 
     def _load_credentials(self):
         if CREDENTIALS_JSON:
@@ -272,6 +279,9 @@ class StockDataUpdater:
 
     def update_global_data(self, data, indices=None, is_kr_open=True, is_us_open=True, mode="AUTO"):
         """'오늘' 시트 갱신: 날짜 변경 시 초기화, 같은 날이면 세션 로그 추가 (필터링 적용)"""
+        # [v2.6.9] 데이터 검증용 로그
+        self._log_payload("today_raw", {"data": data, "indices": indices})
+        
         sheet_name = '오늘'
         try:
             ws = self.sh.worksheet(sheet_name)
@@ -354,9 +364,9 @@ class StockDataUpdater:
         watch_data = [d for d in data if d not in major_data and d not in crypto_data]
 
         sections = [
+            ('⭐ [관심종목]', watch_data),
             ('📌 [주요종목]', major_data),
-            ('🪙 [코인]', crypto_data),
-            ('⭐ [관심종목]', watch_data)
+            ('🪙 [코인]', crypto_data)
         ]
 
         for sec_name, sec_list in sections:
@@ -384,7 +394,11 @@ class StockDataUpdater:
 
         # 데이터 쓰기
         range_name = f'A{start_row}'
-        ws.update(values=rows, range_name=range_name)
+        # [v2.6.9] 최종 출력 데이터 로그
+        self._log_payload("today_rows", rows)
+        
+        if not self.debug_mode:
+            ws.update(values=rows, range_name=range_name)
         
         # 서식 지정 (간략화)
         try:
@@ -668,49 +682,29 @@ class StockDataUpdater:
         kospi_date = indices.get('KOSPI', {}).get('date')
         sp500_date = indices.get('S&P500', {}).get('date')
         
-        is_kr_open = (kospi_date == self.target_date.isoformat())
-        is_us_open = (sp500_date == self.target_date.isoformat())
+        # [v2.6.9] 시장 유형별 개장 상태 세분화 (휴장/거래일/개장여부)
+        target_iso = self.target_date.isoformat()
+        is_kr_trading_day = (self.target_date.weekday() < 5)
+        is_us_trading_day = (self.target_date.weekday() < 5)
         
-        # [v2.6.7] 과거 날짜 요청 시 최종 마감 모드 강제 및 지수/코인 필수 포함 보장
-        if manual_date:
-            print(f">>> [Historical Sync] {self.target_date} 데이터의 최종 마감 상태를 기록합니다.")
-            # 과거 날짜는 이미 장이 끝났으므로 모든 정보 수집 허용
-            is_kr_open = True if kospi_date else is_kr_open
-            is_us_open = True if sp500_date else is_us_open
-        
-        # 모드별 수집 시장 강제 조정
-        if mode == "MORNING":
-            is_us_open = True if sp500_date else False # 전일 미장 마감 데이터
-            is_kr_open = True # 국장 개장 준비
-            print(">>> [MORNING Mode] Capturing US Close & KR Open")
-        elif mode == "MIDDAY":
-            is_kr_open = True
-            is_us_open = False # 미장 휴식
-            print(">>> [MIDDAY Mode] Capturing KR Morning Session")
-        elif mode == "CLOSE":
-            is_kr_open = True
-            is_us_open = False
-            print(">>> [CLOSE Mode] Capturing KR Final Results")
-        elif mode == "EVENING":
-            is_kr_open = True # NXT 마감
-            is_us_open = True # 미장 프리마켓
-            print(">>> [EVENING Mode] Capturing NXT Close & US Pre-market")
-        else:
-            # AUTO 모드/기존 로직: NXT 시간대(08:00~20:00) 및 평일 고려 보정
-            now_kst = datetime.datetime.now()
-            if now_kst.weekday() < 5:  # 평일
-                # 08:00~20:00 사이에는 무조건 국장 데이터를 활성화 (NXT)
-                if 8 <= now_kst.hour < 20:
-                    is_kr_open = True
-                    print(">>> NXT Active Session detected (08:00-20:00 KST)")
-                
-                # 08:00~10:00 사이 (오전 브리핑)에는 전일 미장 마감 데이터를 수집하도록 허용
-                if 8 <= now_kst.hour <= 10:
-                    if sp500_date: # indices에 미장 데이터가 있으면
-                        is_us_open = True
-                        print(">>> US market session (just closed) detected for Morning Briefing")
+        is_kr_actually_open = (kospi_date == target_iso)
+        is_us_actually_open = (sp500_date == target_iso)
 
-        print(f">>> 시장 개장 상태: 한국={is_kr_open}, 미국={is_us_open}")
+        # 리포트 및 오늘 시트 노출 여부 결정
+        # 사용자의 MORNING/MIDDAY 등 세션 요구사항에 맞게 'Active' 상태 결정
+        is_kr_active = is_kr_actually_open or (is_kr_trading_day and mode in ["MORNING", "MIDDAY", "CLOSE", "AUTO"])
+        is_us_active = is_us_actually_open or (is_us_trading_day and mode in ["EVENING", "MORNING", "CLOSE", "AUTO"])
+        
+        if manual_date:
+            # 과거 날짜는 이미 결과가 나왔으므로 데이터가 있으면 Active로 간주
+            is_kr_active = True if kospi_date else False
+            is_us_active = True if sp500_date else False
+
+        print(f">>> 시장 상태: 한국(Active={is_kr_active}, Today={is_kr_actually_open}), 미국(Active={is_us_active}, Today={is_us_actually_open})")
+        
+        # 하위 호환성을 위한 플래그 (스크래핑 등에 사용)
+        is_kr_open = is_kr_active
+        is_us_open = is_us_active
 
         print("3. 수집 중: 개인 관심종목 데이터...")
         watch_data = [] # 개인 관심종목
@@ -753,7 +747,8 @@ class StockDataUpdater:
         market_all = major_data + watch_data 
 
         print("3.5. 갱신 중: '오늘' 시트...")
-        self.update_global_data(market_all, indices, is_kr_open, is_us_open, mode=mode)
+        # v2.6.9: is_active 플래그를 사용하여 노출 결정
+        self.update_global_data(market_all, indices, is_kr_active, is_us_active, mode=mode)
 
         print("4. 기록 중: '관심종목_관리' 종목 정보 업데이트...")
         # 수집된 최신 정보(가격, 추천 등)를 관리 시트에 반영
@@ -870,19 +865,7 @@ class StockDataUpdater:
         print("4.5. 리포트 본문 생성 중 (3대 체제)...")
         report_lines = []
         
-        # 1. [주요종목] 섹션
-        major_list = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
-        if major_list:
-            report_lines.append("=== [주요종목] ===")
-            for a_code, a_name in [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]:
-                subset = [d for d in major_list if d.get('Asset') == a_code and d.get('Price', 0) > 0]
-                if subset:
-                    report_lines.append(f"[주요종목:{a_name}]")
-                    for d in subset:
-                        report_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-                    report_lines.append("")
-
-        # 2. [관심종목] 섹션
+        # 1. [관심종목] 섹션
         watch_list = [d for d in market_all if str(d.get('Category', '')).lower() not in ['major', 'crypto', 'index', 'exchange']]
         if watch_list:
             report_lines.append("=== [관심종목] ===")
@@ -893,6 +876,18 @@ class StockDataUpdater:
                     for d in subset:
                         rec_part = f" [{d['FinalRecommendation']}]" if d['FinalRecommendation'] != "-" else ""
                         report_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%){rec_part}")
+                    report_lines.append("")
+
+        # 2. [주요종목] 섹션
+        major_list = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
+        if major_list:
+            report_lines.append("=== [주요종목] ===")
+            for a_code, a_name in [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]:
+                subset = [d for d in major_list if d.get('Asset') == a_code and d.get('Price', 0) > 0]
+                if subset:
+                    report_lines.append(f"[주요종목:{a_name}]")
+                    for d in subset:
+                        report_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
                     report_lines.append("")
 
         # 3. [특이종목] 섹션 (Scraped)
@@ -925,42 +920,51 @@ class StockDataUpdater:
 
         if target_iso in all_dates:
             row_idx = all_dates.index(target_iso) + 1
-            if manual_date:
-                # [v2.6.7] 과거 날짜 요청 시 덮어쓰기 (최종본 정책)
-                ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
-                print(f"Overwritten (Final State) for past date: {target_iso}.")
-            else:
-                existing_row = ws_monthly.row_values(row_idx)
-                
-                # 데이터 병합 로직 (기존 데이터가 "N/A"가 아니면 유지하고 현재 데이터와 병합)
-                # Market Summary 병합
-                new_market = row_data[1]
-                old_market = existing_row[1] if len(existing_row) > 1 else ""
-                merged_market = self._merge_report_sections(old_market, new_market, ["KR 지수:", "US 지수:", "환율:"])
-                
-                # Watchlist Status 병합
-                new_watch = row_data[2]
-                old_watch = existing_row[2] if len(existing_row) > 2 else ""
-                merged_watch = self._merge_report_sections(old_watch, new_watch, ["KR:", "US:", "Coin:"])
-                
-                # Detailed Info 병합 (마커 기반)
-                new_detailed = row_data[3]
-                old_detailed = existing_row[3] if len(existing_row) > 3 else ""
-                markers = [
-                    "[주요종목:한국]", "[주요종목:미국]", "[주요종목:코인]",
-                    "[관심종목:한국]", "[관심종목:미국]",
-                    "[특이종목:네이버/FDR수집:한국]", "[특이종목:네이버/FDR수집:미국]"
-                ]
-                merged_detailed = self._merge_report_sections(old_detailed, new_detailed, markers)
+            existing_row = ws_monthly.row_values(row_idx)
+            
+            # [v2.6.9] 과거 날짜라도 완전 덮어쓰기 대신 병합을 수행하여 데이터 손실 방지
+            # 단, manual_date 인 경우 병합 시 '신규 정보'가 구 정보보다 우선함
+            
+            # Market Summary 병합
+            new_market = row_data[1]
+            old_market = existing_row[1] if len(existing_row) > 1 else ""
+            merged_market = self._merge_report_sections(old_market, new_market, ["KR 지수:", "US 지수:", "환율:"])
+            
+            # Watchlist Status 병합
+            new_watch = row_data[2]
+            old_watch = existing_row[2] if len(existing_row) > 2 else ""
+            merged_watch = self._merge_report_sections(old_watch, new_watch, ["KR:", "US:", "Coin:"])
+            
+            # Detailed Info 병합 (유연한 마커 지원)
+            new_detailed = row_data[3]
+            old_detailed = existing_row[3] if len(existing_row) > 3 else ""
+            markers = [
+                "[주요종목:한국]", "[주요종목:미국]", "[주요종목:코인]",
+                "[관심종목:한국]", "[관심종목:미국]",
+                "[특이종목:네이버/FDR수집:한국]", "[특이종목:네이버/FDR수집:미국]",
+                "[주요종목]", "[관심종목]", "[주의종목]", "[특이종목]" # 구버전 호환 마커 포함
+            ]
+            merged_detailed = self._merge_report_sections(old_detailed, new_detailed, markers)
 
-                row_data[1] = merged_market
-                row_data[2] = merged_watch
-                row_data[3] = merged_detailed
-                
+            row_data[1] = merged_market
+            row_data[2] = merged_watch
+            row_data[3] = merged_detailed
+            
+            if manual_date:
+                print(f">>> [Historical Sync] Merging data for {target_iso} (Overwrite check done).")
+
+            # [v2.6.9] 월별 데이터 로그
+            self._log_payload("monthly", row_data)
+            
+            if not self.debug_mode:
                 ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
-                print(f"Updated and Merged row for {target_iso}.")
+            print(f"Updated and Merged row for {target_iso}.")
         else:
-            ws_monthly.append_row(row_data)
+            # [v2.6.9] 월별 데이터 로그
+            self._log_payload("monthly", row_data)
+            
+            if not self.debug_mode:
+                ws_monthly.append_row(row_data)
             print(f"Appended new row for {target_iso}.")
 
     def _merge_report_sections(self, old_text, new_text, markers):
@@ -1178,9 +1182,15 @@ class StockDataUpdater:
                 'start': {'date': self.target_date.isoformat(), 'timeZone': 'Asia/Seoul'},
                 'end': {'date': next_day, 'timeZone': 'Asia/Seoul'},
             }
+            # [v2.6.9] 캘린더 데이터 로그
+            self._log_payload("calendar", event)
+            
             print(f">>> 새 이벤트 생성 중: {title}")
-            res = self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-            print(f"✅ 캘린더 이벤트 생성 완료! Link: {res.get('htmlLink')}")
+            if not self.debug_mode:
+                res = self.calendar_service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+                print(f"✅ 캘린더 이벤트 생성 완료! Link: {res.get('htmlLink')}")
+            else:
+                print(f"✅ [DEBUG] 캘린더 이벤트 생성 스킵 (내용 로그 기록됨)")
             
         except Exception as e:
             print(f"ERROR: Failed to update calendar event: {str(e)}")
