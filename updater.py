@@ -916,6 +916,11 @@ class StockDataUpdater:
 
         detailed_market_info = "\n".join(report_lines) if report_lines else "N/A"
 
+        print("5. 기록 중: 월별 일지 (중복 체크 포함)...")
+        ws_monthly = self.get_monthly_worksheet()
+        all_dates = ws_monthly.col_values(1)
+        target_iso = self.target_date.isoformat()
+
         row_data = [
             target_iso,
             market_summary,
