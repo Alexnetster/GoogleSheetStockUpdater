@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.6.3_20260111"
+VERSION = "v2.6.4_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -611,7 +611,7 @@ class StockDataUpdater:
             return ws
 
     def process_and_report(self, mode="AUTO", manual_date=False):
-        print(f"--- Running Updater (Mode: {mode}, Target: {self.target_date}) ---")
+        print(f"--- Running Updater (v{VERSION}, Mode: {mode}, Target: {self.target_date}) ---")
         
         print("1. 동기화 중: 관심종목_요청 내역 반영...")
         watchlist_raw = self.get_watchlist()
@@ -619,19 +619,22 @@ class StockDataUpdater:
         print("2. 수집 중: 시장 지표 및 실제 거래일 확인...")
         indices = self.get_market_indices()
         
-        # 실제 데이터 날짜 기반으로 target_date 자동 조정 (수동 입력이 아닐 경우)
-        if not manual_date and indices:
-            # 주요 지수(KOSPI, S&P500)의 날짜 중 가장 최근 것을 기준일로 채택
+        # [v2.6.4] 기록 기준 날짜 (target_date) 보존 정책
+        # 시장 데이터가 없거나 과거 날짜라 하더라도, 기록은 '오늘 실행한 날짜' 줄에 남겨야 함.
+        # 따라서 indices에서 얻은 날짜로 self.target_date를 덮어쓰는 로직을 제거함.
+        
+        market_date_info = ""
+        if indices:
             dates = [v.get('date') for v in indices.values() if v.get('date')]
             if dates:
                 actual_market_date = max(dates)
                 if actual_market_date != self.target_date.isoformat():
-                    print(f">>> Market Date Detected: {actual_market_date} (Changed from {self.target_date})")
-                    self.target_date = datetime.datetime.strptime(actual_market_date, '%Y-%m-%d').date()
+                    market_date_info = f" (최신 시장 데이터: {actual_market_date})"
+                    print(f">>> Market Date Detected: {actual_market_date} {market_date_info}")
 
-        print(f">>> Final Effective Date: {self.target_date}")
+        print(f">>> Final Logging Date: {self.target_date}{market_date_info}")
         
-        # 실제 데이터 존재 여부로 시장 개장 여부 판단
+        # 실제 데이터 존재 여부로 시장 개장 여부 판단 (기록일 기준)
         kospi_date = indices.get('KOSPI', {}).get('date')
         sp500_date = indices.get('S&P500', {}).get('date')
         
