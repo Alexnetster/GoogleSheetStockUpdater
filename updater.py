@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.5.9_20260111"
+VERSION = "v2.6.0_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -92,6 +92,13 @@ class StockDataUpdater:
         if asset_type in ['KR', 'KRW']: 
             return f"₩{int(n):,}"
         return f"${n:,.2f}"
+    
+    def _normalize_ticker(self, ticker, asset_type):
+        """티커 형식 표준화 (KR: 6자리 숫자, US: 대문자 등)"""
+        t = str(ticker).strip()
+        if asset_type == 'KR' and t.isdigit():
+            return t.zfill(6)
+        return t.upper() if asset_type == 'US' else t
 
     def get_market_indices(self):
         """시장 지수 및 환율 수집 (시트 설정 기반 또는 기본값)"""
@@ -409,6 +416,7 @@ class StockDataUpdater:
             # 한글/영어 키 모두 대응 (과도기 지원)
             def get_val(r, kor, eng): return r.get(kor, r.get(eng, ''))
 
+            # 2. 관심종목_관리 시트 로드 (없으면 생성)
             try:
                 mgmt_ws = self.sh.worksheet('관심종목_관리')
             except gspread.exceptions.WorksheetNotFound:
@@ -416,14 +424,21 @@ class StockDataUpdater:
                 mgmt_ws.append_row(['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
             
             current_mgmt = mgmt_ws.get_all_records()
-            mgmt_tickers = [str(r.get('티커', r.get('Ticker', ''))) for r in current_mgmt]
+            # 중복 체크 고도화: (국가, 티커) 튜플로 관리 (v2.6.0)
+            mgmt_keys = set()
+            for r in current_mgmt:
+                a_type = r.get('구분', r.get('Asset', 'US'))
+                t_raw = r.get('티커', r.get('Ticker', ''))
+                t_norm = self._normalize_ticker(t_raw, a_type)
+                mgmt_keys.add((a_type, t_norm))
             
             # 3. 요청 처리 및 동기화 준비
             final_watchlist = []
             status_updates = [] # '검색결과' 컬럼 업데이트용
-            name_updates = []   # '종목명' 컬럼 업데이트용 (v2.5.9)
+            name_updates = []   # '종목명' 컬럼 업데이트용
             rows_to_add = []    # '관심종목_관리'에 추가할 행들
-            tickers_to_remove = [] # '관심종목_관리'에서 삭제할 티커들
+            keys_to_remove = set() # 삭제할 (국가, 티커) 세트
+            processed_keys = set() # 현재 요청에서 이미 처리된 종목들 (중복 요청 방지)
             
             # TickerFound(검색결과) 및 종목명 필드 인덱스 찾기
             headers_rq = rq_ws.row_values(1)
@@ -436,32 +451,33 @@ class StockDataUpdater:
             elif 'Name' in headers_rq: name_col_idx = headers_rq.index('Name') + 1
 
             for i, req in enumerate(requests):
-                ticker = str(get_val(req, '티커', 'Ticker')).strip()
+                ticker_raw = str(get_val(req, '티커', 'Ticker')).strip()
                 name_req = str(get_val(req, '종목명', 'Name')).strip()
                 enabled = str(get_val(req, '사용여부', 'RequestEnabled')).upper() == 'TRUE'
                 category = str(get_val(req, '카테고리', 'Category')).strip()
                 memo = get_val(req, '메모', 'Memo')
                 
-                if not (ticker or name_req):
-                    status_updates.append("") # 빈 줄 대응
+                if not (ticker_raw or name_req):
+                    status_updates.append("")
+                    name_updates.append("")
                     continue
                 
-                # 티커 보정 (숫자만 있는 경우 6자리로 맞춰 한국 주식 대응)
-                if ticker.isdigit() and len(ticker) < 6:
-                    ticker = ticker.zfill(6)
-                    print(f"Normalized ticker: {ticker}")
+                # 임시 asset_type 결정 (티커 형식으로 1차 판단)
+                tmp_asset = 'US'
+                if ticker_raw.isdigit(): tmp_asset = 'KR'
+                elif '-' in ticker_raw: tmp_asset = 'Coin'
+                
+                ticker = self._normalize_ticker(ticker_raw, tmp_asset)
 
                 found_ticker = None
-                asset_type = 'US'
+                asset_type = tmp_asset
                 
                 # Ticker/Name으로 종목 찾기
                 if ticker:
                     try:
-                        if ticker.isdigit() and len(ticker) == 6: # 한국 주식
-                            asset_type = 'KR'
+                        if asset_type == 'KR':
                             if ticker in self.kr_name_map: found_ticker = ticker
-                        elif '-' in ticker: # 코인 (예: BTC-USD)
-                            asset_type = 'Coin'
+                        elif asset_type == 'Coin':
                             found_ticker = ticker
                         else:
                             # 미국 주식
@@ -479,48 +495,56 @@ class StockDataUpdater:
                 found_status = 'TRUE' if found_ticker else 'FALSE'
                 status_updates.append(found_status)
                 
-                # 종목명 자동 채우기 준비 (v2.5.9)
+                # 종목명 자동 채우기 준비
                 current_name = name_req
                 if found_ticker and not current_name:
                     current_name = self.kr_name_map.get(found_ticker, found_ticker)
                 name_updates.append(current_name)
                 
-                if enabled and found_ticker:
-                    # 현재 관리 시트에서 기존 정보(알림가 등) 유지용 데이터 찾기
-                    existing_item = next((r for r in current_mgmt if str(r.get('티커', r.get('Ticker', ''))) == found_ticker), {})
+                if found_ticker:
+                    key = (asset_type, found_ticker)
                     
-                    final_watchlist.append({
-                        'Ticker': found_ticker,
-                        'Asset': asset_type,
-                        'Memo': memo,
-                        'Category': category,
-                        'AlertPrice': existing_item.get('알림가', existing_item.get('Alert_Price', '')),
-                        'ExpertOpinion': existing_item.get('전문가의견', existing_item.get('Expert_Opinion', ''))
-                    })
-                    
-                    if found_ticker not in mgmt_tickers:
-                        name_display = self.kr_name_map.get(found_ticker, name_req or found_ticker)
-                        # 새 필드 구조 적용: 구분, 티커, 종목명, 카테고리, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크
-                        rows_to_add.append([
-                            asset_type, found_ticker, name_display, category, "", memo, "", "", "", ""
-                        ])
-                        mgmt_tickers.append(found_ticker) # 중복 동시 추가 방지
-                else:
-                    if ticker and ticker in mgmt_tickers:
-                        tickers_to_remove.append(ticker)
+                    if enabled:
+                        if key in processed_keys:
+                            print(f"Skipping duplicate request: {key}")
+                            continue
+                        
+                        processed_keys.add(key)
+                        
+                        # 현재 관리 시트에서 기존 정보 유지
+                        existing_item = next((r for r in current_mgmt if (r.get('구분', r.get('Asset', '')) == asset_type and self._normalize_ticker(r.get('티커', r.get('Ticker', '')), asset_type) == found_ticker)), {})
+                        
+                        final_watchlist.append({
+                            'Ticker': found_ticker,
+                            'Asset': asset_type,
+                            'Memo': memo,
+                            'Category': category,
+                            'AlertPrice': existing_item.get('알림가', existing_item.get('Alert_Price', '')),
+                            'ExpertOpinion': existing_item.get('전문가의견', existing_item.get('Expert_Opinion', ''))
+                        })
+                        
+                        if key not in mgmt_keys:
+                            name_display = self.kr_name_map.get(found_ticker, current_name or found_ticker)
+                            rows_to_add.append([
+                                asset_type, found_ticker, name_display, category, "", memo, "", "", "", ""
+                            ])
+                            mgmt_keys.add(key)
+                    else:
+                        if key in mgmt_keys:
+                            keys_to_remove.add(key)
+                            if key in mgmt_keys: mgmt_keys.remove(key)
 
-            # 4. Batch Updates 실행 (API 할당량 절약)
+            # 4. Batch Updates 실행
             
             # 4-1. 요청 시트의 검색결과 및 종목명 일괄 업데이트
             if status_updates:
                 range_found = f"{gspread.utils.rowcol_to_a1(2, found_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, found_col_idx)}"
                 rq_ws.update(values=[[s] for s in status_updates], range_name=range_found)
                 
-                # 종목명 업데이트 (비어있던 칸이 채워진 경우만)
                 range_name = f"{gspread.utils.rowcol_to_a1(2, name_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, name_col_idx)}"
                 rq_ws.update(values=[[n] for n in name_updates], range_name=range_name)
                 
-                print(f"Batch updated search results and names for {len(status_updates)} items.")
+                print(f"Batch updated rq_ws: {len(status_updates)} items.")
 
             # 4-2. 관리 시트에 새 종목 일괄 추가
             if rows_to_add:
@@ -528,15 +552,17 @@ class StockDataUpdater:
                 for r in rows_to_add: print(f"Added to management: {r[1]}")
 
             # 4-3. 관리 시트에서 비활성 종목 일괄 삭제
-            if tickers_to_remove:
+            if keys_to_remove:
                 headers_mgmt = mgmt_ws.row_values(1)
-                ticker_col = (headers_mgmt.index('티커') + 1) if '티커' in headers_mgmt else ((headers_mgmt.index('Ticker') + 1) if 'Ticker' in headers_mgmt else 2)
+                asset_col = (headers_mgmt.index('구분') + 1) if '구분' in headers_mgmt else 1
+                ticker_col = (headers_mgmt.index('티커') + 1) if '티커' in headers_mgmt else 2
                 
-                # 삭제 시 인덱스가 변하므로 뒤에서부터 삭제
                 all_cells = mgmt_ws.get_all_values()
                 rows_to_del = []
                 for i, row in enumerate(all_cells[1:], start=2):
-                    if row[ticker_col-1] in tickers_to_remove:
+                    r_asset = row[asset_col-1]
+                    r_ticker = self._normalize_ticker(row[ticker_col-1], r_asset)
+                    if (r_asset, r_ticker) in keys_to_remove:
                         rows_to_del.append(i)
                 
                 for r_idx in sorted(rows_to_del, reverse=True):
