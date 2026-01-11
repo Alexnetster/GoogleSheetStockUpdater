@@ -1,0 +1,54 @@
+name: Maintenance - Sheet Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Operation Mode (CHECK or RESET)'
+        required: true
+        default: 'CHECK'
+        type: choice
+        options:
+        - CHECK
+        - RESET
+      confirm_reset:
+        description: 'Type "RESET" to confirm deletion (only for RESET mode)'
+        required: false
+        default: ''
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install gspread google-auth python-dotenv
+
+      - name: Run Schema Check
+        if: ${{ github.event.inputs.mode == 'CHECK' }}
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: python tools/initialize_sheet.py
+
+      - name: Run Full Reset
+        if: ${{ github.event.inputs.mode == 'RESET' && github.event.inputs.confirm_reset == 'RESET' }}
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: python tools/initialize_sheet.py --reset --yes
+
+      - name: Reset Denied
+        if: ${{ github.event.inputs.mode == 'RESET' && github.event.inputs.confirm_reset != 'RESET' }}
+        run: |
+          echo "❌ Reset failed: You must type 'RESET' in the confirmation box to proceed."
+          exit 1

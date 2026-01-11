@@ -33,9 +33,9 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.1.0_20260111"
+VERSION = "v2.4.2_20260111"
 
-# 특이종목 기준 (자체 분석용 - 완화된 기준)
+# 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
 UNUSUAL_VOL_SPIKE = 2.0     # 거래량 급증 기준 (배수)
 MIN_MARKET_CAP = 1000       # 최소 시가총액 (억원)
@@ -94,24 +94,38 @@ class StockDataUpdater:
         return f"${n:,.2f}"
 
     def get_market_indices(self):
-        """핵심 시장 지수 및 환율 수집 (대상 날짜 기준)"""
-        indices = {
-            '^KS11': 'KOSPI', '^KQ11': 'KOSDAQ', 
-            '^GSPC': 'S&P500', '^IXIC': 'NASDAQ',
-            'USDKRW=X': 'USD/KRW'
-        }
+        """시장 지수 및 환율 수집 (시트 설정 기반 또는 기본값)"""
+        # 1. 시트에서 Category='Index'인 항목 가져오기 시도
+        index_map = {}
+        try:
+            ws = self.sh.worksheet('관심종목_관리')
+            all_records = ws.get_all_records()
+            for r in all_records:
+                category = str(r.get('카테고리', r.get('Category', ''))).strip().lower()
+                if category in ['index', '지수']:
+                    ticker = str(r.get('티커', r.get('Ticker', ''))).strip()
+                    name = str(r.get('종목명', r.get('Name', ''))).strip()
+                    if ticker and name:
+                        index_map[ticker] = name
+        except:
+            pass
+
+        if not index_map:
+            print("⚠️  [필독] 시트에서 'Index' 또는 '지수' 카테고리를 찾을 수 없습니다.")
+            print("   -> 'tools/initialize_sheet.py'를 실행하거나 GitHub 'Maintenance' 워크플로우를 통해 시트를 복구하세요.")
+        else:
+            print(f">>> Found {len(index_map)} indices in sheet.")
+
         results = {}
-        # target_date 포함 5일치 데이터를 가져와서 target_date 이하의 가장 최근 데이터 사용
         end_date = self.target_date + datetime.timedelta(days=1)
         start_date = self.target_date - datetime.timedelta(days=10)
         
-        for ticker, name in indices.items():
+        for ticker, name in index_map.items():
             try:
                 stock = yf.Ticker(ticker)
                 hist = stock.history(start=start_date, end=end_date, prepost=True)
                 if hist.empty: continue
                 
-                # target_date 이하의 가장 최신 행 찾기
                 hist = hist[hist.index.date <= self.target_date]
                 if len(hist) < 2: continue
                 
@@ -127,7 +141,7 @@ class StockDataUpdater:
                     'date': curr.name.date().isoformat()
                 }
             except Exception as e:
-                print(f"Error fetching index {name}: {e}")
+                print(f"Error fetching index {name} ({ticker}): {e}")
         return results
 
     def get_stock_data(self, tickers, asset_type):
@@ -171,9 +185,39 @@ class StockDataUpdater:
                 name = stock.info.get('longName') or stock.info.get('shortName') or ticker
                 if asset_type == 'KR': name = self.kr_name_map.get(ticker, name)
 
+                # 테마 및 정보 링크 수집
+                theme = "-"
+                info_link = ""
+                
+                try:
+                    if asset_type == 'US':
+                        sector = stock.info.get('sector', '')
+                        industry = stock.info.get('industry', '')
+                        theme = f"{sector} / {industry}" if sector and industry else sector or industry or "-"
+                        info_link = f"https://finance.yahoo.com/quote/{ticker}"
+                    elif asset_type == 'KR':
+                        # 네이버 크롤링으로 테마 및 링크 수집
+                        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
+                        info_link = f"https://www.judal.co.kr/search?q={ticker}" # 주달 링크 우선 사용
+                        
+                        resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+                        soup = BeautifulSoup(resp.text, 'html.parser')
+                        
+                        # 테마 추출 시도 (관련 섹션/테마 영역)
+                        theme_links = soup.select('div.aside_area div.popular_list a') # 실시간 검색 테마가 아닌 해당 종목 테마 찾기
+                        # 실제 해당 종목 테마는 페이지 하단이나 우측에 '테마명'으로 나오기도 함. 
+                        # 간단히 '테마' 텍스트를 포함한 링크나 텍스트 검색
+                        themes = []
+                        for a in soup.find_all('a', href=True):
+                            if '/sise/theme.naver?field=name' in a['href']:
+                                themes.append(a.text.strip())
+                        if themes:
+                            theme = ", ".join(list(set(themes))[:3]) # 중복 제거 및 최대 3개
+                except:
+                    pass
+
                 # 전문가 의견/추천 정보 수집
                 recommendation = "-"
-                expert_opinion = ""
                 
                 try:
                     if asset_type == 'US':
@@ -184,10 +228,6 @@ class StockDataUpdater:
                             if target_price:
                                 recommendation += f" (T:${target_price})"
                     elif asset_type == 'KR':
-                        # 네이버 크롤링으로 투자의견 추출 시도
-                        url = f"https://finance.naver.com/item/main.naver?code={ticker}"
-                        resp = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-                        soup = BeautifulSoup(resp.text, 'html.parser')
                         # 투자의견 및 목표주가 (rt_invest_box 내)
                         invest_box = soup.select_one('.rt_invest_box')
                         if invest_box:
@@ -208,10 +248,12 @@ class StockDataUpdater:
                     'Volume': curr_vol,
                     'VolSpike': round(vol_spike, 2),
                     'MarketCap': stock.info.get('marketCap', 0),
+                    'Theme': theme,
+                    'InfoLink': info_link,
                     'News': self._get_news_top1(stock, ticker, asset_type),
                     'ActualDate': curr.name.date().isoformat(),
                     'Recommendation': recommendation,
-                    'ExpertOpinion': expert_opinion
+                    'ExpertOpinion': ""
                 })
             except Exception as e:
                 print(f"Error fetching {asset_type} {ticker}: {e}")
@@ -278,17 +320,28 @@ class StockDataUpdater:
             
             rows.append([])
         
-        # 주요 종목 데이터 섹션 (그룹화 표시 - 최종 구조)
-        asset_info = {'KR': '한국', 'US': '미국', 'Coin': '코인'}
-        for asset_code, asset_name in asset_info.items():
-            asset_data = [d for d in data if d['Asset'] == asset_code]
-            if not asset_data: continue
+        # 주요 종목 데이터 섹션 (구분: Major vs Watchlist)
+        categories_to_display = [('Major', '주요종목'), ('Watchlist', '관심종목')]
+        for cat_id, cat_name in categories_to_display:
+            # 보강된 필터링: blank, '관심종목' -> Watchlist / '주요종목' -> Major
+            def is_match(d_cat, target_id):
+                clean_cat = str(d_cat).strip().lower()
+                if not clean_cat: clean_cat = 'watchlist' # 기본값
+                
+                # 한글 매핑
+                mapping = {'지수': 'index', '주요종목': 'major', '관심종목': 'watchlist'}
+                translated_cat = mapping.get(clean_cat, clean_cat)
+                
+                return translated_cat == target_id.lower()
+
+            cat_data = [d for d in data if is_match(d.get('Category', ''), cat_id)]
+            if not cat_data: continue
             
-            rows.append([f'=== [주요종목:{asset_name}] ===', '', '', '', '', '', ''])
-            header = ['Asset', 'Ticker', 'Name', 'Price', 'ChangeRate', 'Volume', 'MarketCap']
+            rows.append([f'=== [{cat_name}] ===', '', '', '', '', '', ''])
+            header = ['자산', '티커', '종목명', '현재가', '변동률', '거래량', '시총']
             rows.append(header)
             
-            for d in asset_data:
+            for d in cat_data:
                 rows.append([
                     d['Asset'], d['Ticker'], d['Name'], 
                     d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
@@ -340,34 +393,137 @@ class StockDataUpdater:
         return "-"
 
     def get_watchlist(self):
+        """관심종목_요청 기반으로 관심종목_관리 동기화 및 데이터 반환"""
         try:
-            ws = self.sh.worksheet('관심종목_관리')
-            records = ws.get_all_records()
-            return records
-        except:
-            print("Watchlist sheet not found. Creating one with enhanced structure...")
-            ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
-            ws.append_row(['Country', 'Ticker', 'Name', 'Asset', 'Memo', 'Alert_Price', 'Recommendation', 'Expert_Opinion'])
-            return []
+            # 1. 관심종목_요청 시트 로드 (없으면 생성)
+            try:
+                rq_ws = self.sh.worksheet('관심종목_요청')
+            except gspread.exceptions.WorksheetNotFound:
+                # 구버전 호환 또는 신규 생성
+                rq_ws = self.sh.add_worksheet(title='관심종목_요청', rows=100, cols=6)
+                rq_ws.append_row(['티커', '종목명', '카테고리', '메모', '사용여부', '검색결과'])
+                print("Created '관심종목_요청' sheet.")
+            
+            requests = rq_ws.get_all_records()
+            # 한글/영어 키 모두 대응 (과도기 지원)
+            def get_val(r, kor, eng): return r.get(kor, r.get(eng, ''))
+
+            # 2. 관심종목_관리 시트 로드 (없으면 생성)
+            try:
+                mgmt_ws = self.sh.worksheet('관심종목_관리')
+            except gspread.exceptions.WorksheetNotFound:
+                mgmt_ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
+                mgmt_ws.append_row(['구분', '카테고리', '티커', '종목명', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
+            
+            current_mgmt = mgmt_ws.get_all_records()
+            mgmt_tickers = [str(r.get('티커', r.get('Ticker', ''))) for r in current_mgmt]
+            
+            # 3. 요청 처리 및 동기화
+            final_watchlist = []
+            
+            for i, req in enumerate(requests):
+                ticker = str(get_val(req, '티커', 'Ticker')).strip()
+                name_req = str(get_val(req, '종목명', 'Name')).strip()
+                enabled = str(get_val(req, '사용여부', 'RequestEnabled')).upper() == 'TRUE'
+                category = str(get_val(req, '카테고리', 'Category')).strip()
+                memo = get_val(req, '메모', 'Memo')
+                
+                if not (ticker or name_req): continue
+                
+                found_ticker = None
+                asset_type = 'US'
+                
+                # TickerFound 필드 인덱스 찾기
+                headers = rq_ws.row_values(1)
+                found_col_idx = 6 # 기본값
+                if '검색결과' in headers: found_col_idx = headers.index('검색결과') + 1
+                elif 'TickerFound' in headers: found_col_idx = headers.index('TickerFound') + 1
+
+                # Ticker/Name으로 종목 찾기
+                if ticker:
+                    try:
+                        if ticker.isdigit() and len(ticker) == 6: # 한국 주식
+                            asset_type = 'KR'
+                            if ticker in self.kr_name_map: found_ticker = ticker
+                        elif '-' in ticker: # 코인 (예: BTC-USD)
+                            asset_type = 'Coin'
+                            found_ticker = ticker
+                        else:
+                            # 미국 주식
+                            s = yf.Ticker(ticker)
+                            if s.info.get('symbol'): found_ticker = ticker
+                    except: pass
+                
+                if not found_ticker and name_req:
+                    for code, name in self.kr_name_map.items():
+                        if name == name_req:
+                            found_ticker = code
+                            asset_type = 'KR'
+                            break
+                
+                found_status = 'TRUE' if found_ticker else 'FALSE'
+                rq_ws.update_cell(i + 2, found_col_idx, found_status)
+                
+                if enabled and found_ticker:
+                    # 현재 관리 시트에서 기존 정보(알림가 등) 유지용 데이터 찾기
+                    existing_item = next((r for r in current_mgmt if str(r.get('티커', r.get('Ticker', ''))) == found_ticker), {})
+                    
+                    final_watchlist.append({
+                        'Ticker': found_ticker,
+                        'Asset': asset_type,
+                        'Memo': memo,
+                        'Category': category,
+                        'AlertPrice': existing_item.get('알림가', existing_item.get('Alert_Price', '')),
+                        'ExpertOpinion': existing_item.get('전문가의견', existing_item.get('Expert_Opinion', ''))
+                    })
+                    
+                    if found_ticker not in mgmt_tickers:
+                        name_display = self.kr_name_map.get(found_ticker, name_req or found_ticker)
+                        # 새 필드 구조 적용: 구분, 카테고리, 티커, 종목명, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크
+                        mgmt_ws.append_row([
+                            asset_type, category, found_ticker, name_display, "", memo, "", "", "", ""
+                        ])
+                        print(f"Added to management: {found_ticker}")
+                else:
+                    if ticker and ticker in mgmt_tickers:
+                        # 컬럼 3(티커) 또는 2(Ticker)에서 검색
+                        ticker_col = 3 if '티커' in mgmt_ws.row_values(1) else 2
+                        cells = mgmt_ws.findall(ticker, in_column=ticker_col)
+                        for cell in cells:
+                            mgmt_ws.delete_rows(cell.row)
+                            print(f"Removed from management: {ticker}")
+                rq_ws.update_cell(row_idx, found_col_idx, found_status)
+
+            return mgmt_ws.get_all_records()
+
+        except Exception as e:
+            print(f"Error in Watchlist Sync: {e}")
+            # 에러 발생 시 기존 방식대로라도 시도
+            try:
+                ws = self.sh.worksheet('관심종목_관리')
+                return ws.get_all_records()
+            except:
+                return []
 
     def get_monthly_worksheet(self):
         """월별 탭 관리 및 반환 (target_date 기준)"""
         tab_name = self.target_date.strftime('%Y-%m')
+        headers = ['날짜', '시장 요약', '관심종목 현황', '주의종목', '버전']
+        
         try:
             ws = self.sh.worksheet(tab_name)
             
-            # 기존 시트에도 서식 적용 (모든 컬럼 상단 정렬)
+            # 기존 시트 서식 적용 (상단 정렬)
             try:
                 fmt_top = CellFormat(verticalAlignment='TOP')
-                format_cell_range(ws, 'A:E', fmt_top)  # 모든 컬럼 상단 정렬
-            except Exception as e:
-                print(f"Warning: Could not apply formatting to existing sheet: {e}")
+                format_cell_range(ws, 'A:E', fmt_top)
+            except: pass
             
             return ws
         except gspread.exceptions.WorksheetNotFound:
             # 새 시트 생성 시에만 최신 구조 적용
             ws = self.sh.add_worksheet(title=tab_name, rows=1000, cols=15)
-            ws.append_row(['Date', 'Market Summary', 'Watchlist Status', 'Unusual Stocks', 'Version'])
+            ws.update('A1', [headers])
             
             # 모든 컬럼 상단 정렬 적용
             try:
@@ -379,8 +535,8 @@ class StockDataUpdater:
             
             return ws
 
-    def process_and_report(self, manual_date=False):
-        print(f"--- Running Updater (Initial Target: {self.target_date}) ---")
+    def process_and_report(self, mode="AUTO", manual_date=False):
+        print(f"--- Running Updater (Mode: {mode}, Target: {self.target_date}) ---")
         
         print("1. 수집 중: 시장 지표 및 실제 거래일 확인...")
         indices = self.get_market_indices()
@@ -404,21 +560,51 @@ class StockDataUpdater:
         is_kr_open = (kospi_date == self.target_date.isoformat())
         is_us_open = (sp500_date == self.target_date.isoformat())
         
-        # NXT 시간대(08:00~20:00) 및 평일 고려 보정
-        now_kst = datetime.datetime.now()
-        if now_kst.weekday() < 5:  # 평일
-            if 8 <= now_kst.hour < 20:
-                is_kr_open = True  # NXT 가동 시간
-                print(">>> NXT Active Session detected (08:00-20:00 KST)")
+        # 모드별 수집 시장 강제 조정
+        if mode == "MORNING":
+            is_us_open = True if sp500_date else False # 전일 미장 마감 데이터
+            is_kr_open = True # 국장 개장 준비
+            print(">>> [MORNING Mode] Capturing US Close & KR Open")
+        elif mode == "MIDDAY":
+            is_kr_open = True
+            is_us_open = False # 미장 휴식
+            print(">>> [MIDDAY Mode] Capturing KR Morning Session")
+        elif mode == "CLOSE":
+            is_kr_open = True
+            is_us_open = False
+            print(">>> [CLOSE Mode] Capturing KR Final Results")
+        elif mode == "EVENING":
+            is_kr_open = True # NXT 마감
+            is_us_open = True # 미장 프리마켓
+            print(">>> [EVENING Mode] Capturing NXT Close & US Pre-market")
+        else:
+            # AUTO 모드/기존 로직: NXT 시간대(08:00~20:00) 및 평일 고려 보정
+            now_kst = datetime.datetime.now()
+            if now_kst.weekday() < 5:  # 평일
+                # 08:00~20:00 사이에는 무조건 국장 데이터를 활성화 (NXT)
+                if 8 <= now_kst.hour < 20:
+                    is_kr_open = True
+                    print(">>> NXT Active Session detected (08:00-20:00 KST)")
+                
+                # 08:00~10:00 사이 (오전 브리핑)에는 전일 미장 마감 데이터를 수집하도록 허용
+                if 8 <= now_kst.hour <= 10:
+                    if sp500_date: # indices에 미장 데이터가 있으면
+                        is_us_open = True
+                        print(">>> US market session (just closed) detected for Morning Briefing")
 
         print(f">>> 시장 개장 상태: 한국={is_kr_open}, 미국={is_us_open}")
 
         print("2. 수집 중: 관심종목 (개장된 시장만)...")
         watchlist_raw = self.get_watchlist()
-        watch_data = []
+        watch_data = [] # 개인 관심종목
+        major_data = [] # 주요 종목 (지수 옆 표시용)
+        
         for item in watchlist_raw:
             ticker = str(item.get('Ticker', ''))
             if not ticker: continue
+            
+            category = str(item.get('Category', '')).strip().lower()
+            if category in ['index', '지수']: continue # 지수는 이미 수집됨
             
             asset_type = item.get('Asset', 'US')
             
@@ -431,41 +617,47 @@ class StockDataUpdater:
                 # 시트의 사용자 메모 및 의견 병합
                 res[0]['Memo'] = item.get('Memo', '')
                 res[0]['ExpertOpinion_User'] = item.get('Expert_Opinion', '')
+                res[0]['Category'] = item.get('Category', 'Watchlist')
                 
-                # 리포트용 요약 문구 생성 (시트 데이터 기반 추천 vs 시스템 자동 추천)
+                # 리포트용 요약 문구 생성
                 final_rec = item.get('Recommendation', res[0].get('Recommendation', '-'))
                 res[0]['FinalRecommendation'] = final_rec
                 
-                watch_data.append(res[0])
+                if category in ['major', '주요']:
+                    major_data.append(res[0])
+                else:
+                    watch_data.append(res[0])
         
-        print("3. 수집 중: 주요 마켓 데이터...")
-        market_all = []
-        
-        # 한국 시장 개장 시 한국 주식 수집
-        if is_kr_open:
-            print(">>> 한국 시장 개장: 한국 주식 수집")
-            sample_kr = ['005930', '000660', '009150', '006400', '035420', '005380']  # 삼성전자, 하이닉스, 삼성전기, 삼성sdi, NAVER, 현대차
-            market_all.extend(self.get_stock_data(sample_kr, 'KR'))
-        else:
-            print(">>> 한국 시장 휴장: 한국 주식 제외")
-        
-        # 미국 시장 개장 시 미국 주식 수집
-        if is_us_open:
-            print(">>> 미국 시장 개장: 미국 주식 수집")
-            sample_us = ['NVDA', 'TSLA', 'AAPL', 'MSFT', 'AMZN', 'META', 'INTC']  # 주요 빅테크 및 성장주
-            market_all.extend(self.get_stock_data(sample_us, 'US'))
-        else:
-            print(">>> 미국 시장 휴장: 미국 주식 제외")
-        
-        # 코인은 항상 수집 (24/7 거래)
-        print(">>> 코인 시장: 24/7 거래 (항상 수집)")
-        sample_crypto = ['BTC', 'ETH', 'XRP', 'SOL']
-        market_all.extend(self.get_stock_data(sample_crypto, 'Coin'))
+        # '오늘' 시트 및 리포트용 데이터 통합
+        market_all = major_data + watch_data 
 
         print("3.5. 갱신 중: '오늘' 시트...")
         self.update_global_data(market_all, indices, is_kr_open, is_us_open)
 
-        print("4. 수집 중: 특이종목 (네이버 증권 + FDR 전수 조사 + 자체 분석)...")
+        print("4. 기록 중: '관심종목_관리' 종목 정보 업데이트...")
+        # 수집된 최신 정보(가격, 추천 등)를 관리 시트에 반영
+        try:
+            mgmt_ws = self.sh.worksheet('관심종목_관리')
+            mgmt_data = mgmt_ws.get_all_records()
+            for i, row_dict in enumerate(mgmt_data):
+                ticker = str(row_dict.get('티커', row_dict.get('Ticker', '')))
+                # market_all에서 해당 티커 찾기
+                info = next((d for d in market_all if d['Ticker'] == ticker), None)
+                if info:
+                    row_idx = i + 2
+                    # 필드 맵핑 (구분, 카테고리, 티커, 종목명, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크)
+                    # 영어/한글 혼용 대응을 위해 인덱스 기반 업데이트 권장
+                    headers = mgmt_ws.row_values(1)
+                    try:
+                        if '테마' in headers: mgmt_ws.update_cell(row_idx, headers.index('테마') + 1, info.get('Theme', '-'))
+                        if '시스템추천' in headers: mgmt_ws.update_cell(row_idx, headers.index('시스템추천') + 1, info.get('Recommendation', '-'))
+                        if '정보링크' in headers: mgmt_ws.update_cell(row_idx, headers.index('정보링크') + 1, info.get('InfoLink', ''))
+                    except Exception as e:
+                        print(f"Error updating mgmt row for {ticker}: {e}")
+        except Exception as e:
+            print(f"Warning: 관심종목_관리 업데이트 중 실패: {e}")
+
+        print("4. 수집 중: 주의종목 (네이버 증권 + FDR 전수 조사 + 자체 분석)...")
         
         # 4-1. 네이버 증권 스크래핑 (실시간/핫 종목)
         naver_unusual = []
@@ -493,7 +685,7 @@ class StockDataUpdater:
             except Exception as e:
                 print(f"Warning: 스크래핑/전수조사 중 실패: {e}")
         elif not is_kr_open:
-            print(">>> 휴장일: 국내 주식 특이종목 수집을 건너뜁니다.")
+            print(">>> 휴장일: 국내 주식 주의종목 수집을 건너뜁니다.")
         
         # 4-2. 자체 분석 (보유 종목/관심 종목 대상 완화된 기준)
         internal_unusual = [
@@ -516,15 +708,21 @@ class StockDataUpdater:
                 unusual.append(d)
                 seen.add(d['Ticker'])
         
-        print(f">>> 최종 특이종목: {len(unusual)}개 (외부수집 {len(naver_unusual)}개 + 자체 {len(unusual) - len(naver_unusual)}개)")
+        print(f">>> 최종 주의종목: {len(unusual)}개 (외부수집 {len(naver_unusual)}개 + 자체 {len(unusual) - len(naver_unusual)}개)")
 
 
-        # 요약 생성 - Market Summary (여러 줄 형식)
+        # 요약 생성 - Market Summary (지수 동적 생성)
         market_summary_lines = []
-        market_summary_lines.append(f"KR: KOSPI {indices.get('KOSPI', {}).get('rate', 0):+.2f}%, KOSDAQ {indices.get('KOSDAQ', {}).get('rate', 0):+.2f}%")
-        market_summary_lines.append(f"US: S&P500 {indices.get('S&P500', {}).get('rate', 0):+.2f}%, NASDAQ {indices.get('NASDAQ', {}).get('rate', 0):+.2f}%")
-        market_summary_lines.append(f"환율: USD/KRW {indices.get('USD/KRW', {}).get('change', 0):+.1f}원")
-        market_summary = "\n".join(market_summary_lines)
+        # 지수들을 국가별로 묶어서 표시 시도
+        kr_indices = [f"{k} {v['rate']:+.2f}%" for k, v in indices.items() if k in ['KOSPI', 'KOSDAQ']]
+        us_indices = [f"{k} {v['rate']:+.2f}%" for k, v in indices.items() if k in ['S&P500', 'NASDAQ', 'Dow Jones']]
+        other_indices = [f"{k} {v['price']:,.1f} ({v['change']:+.1f})" for k, v in indices.items() if k not in ['KOSPI', 'KOSDAQ', 'S&P500', 'NASDAQ', 'Dow Jones']]
+
+        if kr_indices: market_summary_lines.append(f"KR: {', '.join(kr_indices)}")
+        if us_indices: market_summary_lines.append(f"US: {', '.join(us_indices)}")
+        if other_indices: market_summary_lines.append(f"기타: {', '.join(other_indices)}")
+        
+        market_summary = "\n".join(market_summary_lines) or "N/A"
         
         # 관심종목 요약 (추천 정보 포함 및 형식 지정)
         watch_summary_lines = []
@@ -544,31 +742,23 @@ class StockDataUpdater:
         
         watch_summary = "\n".join(watch_summary_lines)
         
-        # 주요 종목 요약 (모든 샘플 종목 중 가격 정보가 유효한 것만 표시)
-        unusual_summary_lines = []
-        
-        # 1. [주요종목] 섹션 세분화 (개장한 시장 또는 코인 위주)
-        asset_types = [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]
-        for a_code, a_name in asset_types:
-            subset = []
-            for d in market_all:
-                if d.get('Price', 0) <= 0: continue
-                if d.get('Asset') != a_code: continue
-                if a_code == 'KR' and not is_kr_open: continue
-                if a_code == 'US' and not is_us_open: continue
-                subset.append(d)
-                
-            if subset:
-                unusual_summary_lines.append(f"[주요종목:{a_name}]")
-                for d in subset:
-                    unusual_summary_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
-                unusual_summary_lines.append("")
+        # 1. [주요종목] 섹션 (시트에서 'Major'로 태깅된 것만 표시)
+        major_list = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
+        if major_list:
+            asset_types = [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]
+            for a_code, a_name in asset_types:
+                subset = [d for d in major_list if d.get('Asset') == a_code and d.get('Price', 0) > 0]
+                if subset:
+                    unusual_summary_lines.append(f"[주요종목:{a_name}]")
+                    for d in subset:
+                        unusual_summary_lines.append(f"[{d['Ticker']}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
+                    unusual_summary_lines.append("")
 
-        # 2. [특이종목:네이버증권]
+        # 2. [주의종목:네이버증권]
         if unusual:
             naver_total = [d for d in unusual if d.get('Source') in ['Naver', 'FDR'] and d.get('Price', 0) > 0]
             if naver_total:
-                unusual_summary_lines.append("[특이종목:네이버증권]")
+                unusual_summary_lines.append("[주의종목:네이버증권]")
                 for region in ['한국', '미국']:
                     asset_prefix = 'KR' if region == '한국' else 'US'
                     region_stocks = [d for d in naver_total if d.get('Asset') == asset_prefix]
@@ -579,10 +769,10 @@ class StockDataUpdater:
                             unusual_summary_lines.append(f"[{category}] {d['Name']} ({d['FormattedPrice']} / {d['ChangeRate']:+.2f}%)")
                 unusual_summary_lines.append("")
             
-            # 3. [특이종목:자체분석]
+            # 3. [주의종목:자체분석]
             internal_total = [d for d in unusual if d.get('Source') == 'Internal' and d.get('Price', 0) > 0]
             if internal_total:
-                unusual_summary_lines.append("[특이종목:자체분석]")
+                unusual_summary_lines.append("[주의종목:자체분석]")
                 for region in ['한국', '미국']:
                     asset_prefix = 'KR' if region == '한국' else 'US'
                     region_stocks = [d for d in internal_total if d.get('Asset') == asset_prefix]
@@ -599,7 +789,7 @@ class StockDataUpdater:
         all_dates = ws_monthly.col_values(1)
         target_iso = self.target_date.isoformat()
         
-        # 시트에는 특이종목만 기록 (네이버 우선 형식)
+        # 시트에는 주의종목만 기록 (네이버 우선 형식)
         detailed_market_info = unusual_summary
 
         row_data = [
@@ -613,11 +803,75 @@ class StockDataUpdater:
 
         if target_iso in all_dates:
             row_idx = all_dates.index(target_iso) + 1
+            existing_row = ws_monthly.row_values(row_idx)
+            
+            # 데이터 병합 로직 (기존 데이터가 "N/A"가 아니면 유지하고 현재 데이터와 병합)
+            # Market Summary 병합
+            new_market = row_data[1]
+            old_market = existing_row[1] if len(existing_row) > 1 else ""
+            merged_market = self._merge_report_sections(old_market, new_market, ["KR:", "US:", "환율:"])
+            
+            # Watchlist Status 병합
+            new_watch = row_data[2]
+            old_watch = existing_row[2] if len(existing_row) > 2 else ""
+            merged_watch = self._merge_report_sections(old_watch, new_watch, ["KR:", "US:", "Coin:"])
+            
+            # Unusual Stocks 병합 (주의종목)
+            new_unusual = row_data[3]
+            old_unusual = existing_row[3] if len(existing_row) > 3 else ""
+            merged_unusual = self._merge_report_sections(old_unusual, new_unusual, ["[주요종목:한국]", "[주요종목:미국]", "[주요종목:코인]", "[주의종목:네이버증권]", "[주의종목:자체분석]"])
+
+            row_data[1] = merged_market
+            row_data[2] = merged_watch
+            row_data[3] = merged_unusual
+            
             ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
-            print(f"Updated existing row for {target_iso}.")
+            print(f"Updated and Merged row for {target_iso}.")
         else:
             ws_monthly.append_row(row_data)
             print(f"Appended new row for {target_iso}.")
+
+    def _merge_report_sections(self, old_text, new_text, markers):
+        """섹션 마커를 기준으로 구정보와 신정보 병합 (신정보 우선 업데이트)"""
+        if not old_text or old_text == "N/A": return new_text
+        if not new_text or new_text == "N/A": return old_text
+        
+        # 1. 기존 텍스트를 섹션별로 분리
+        def split_by_markers(text, markers):
+            sections = {}
+            current_marker = "DEFAULT"
+            lines = text.split('\n')
+            for line in lines:
+                found_marker = False
+                for m in markers:
+                    if line.startswith(m):
+                        current_marker = m
+                        sections[current_marker] = [line]
+                        found_marker = True
+                        break
+                if not found_marker:
+                    if current_marker not in sections: sections[current_marker] = []
+                    sections[current_marker].append(line)
+            return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+        old_sections = split_by_markers(old_text, markers)
+        new_sections = split_by_markers(new_text, markers)
+        
+        # 2. 새로운 섹션 정보로 덮어쓰거나 기존 유지
+        merged = old_sections.copy()
+        for k, v in new_sections.items():
+            if v and v != "N/A":
+                merged[k] = v
+        
+        # 3. 마커 순서대로 재조립
+        ordered_parts = []
+        if "DEFAULT" in merged and merged["DEFAULT"]:
+            ordered_parts.append(merged["DEFAULT"])
+        for m in markers:
+            if m in merged and merged[m]:
+                ordered_parts.append(merged[m])
+        
+        return "\n\n".join(ordered_parts).strip()
 
         print("5. 연동 중: 구글 캘린더...")
         # 캘린더 이벤트 제목 및 내용 생성
@@ -625,9 +879,10 @@ class StockDataUpdater:
         # 시간대별 세션 태그
         now_kst = datetime.datetime.now()
         session_tag = ""
-        if 7 <= now_kst.hour <= 9: session_tag = " (모닝브리핑) "
-        elif 16 <= now_kst.hour <= 18: session_tag = " (장마감리뷰) "
-        elif 19 <= now_kst.hour <= 21: session_tag = " (이브닝브리핑) "
+        if mode == "MORNING" or (7 <= now_kst.hour <= 9): session_tag = " (모닝브리핑) "
+        elif mode == "MIDDAY" or (11 <= now_kst.hour <= 13): session_tag = " (미드데이브리핑) "
+        elif mode == "CLOSE" or (15 <= now_kst.hour <= 17): session_tag = " (장마감리뷰) "
+        elif mode == "EVENING" or (19 <= now_kst.hour <= 21): session_tag = " (이브닝브리핑) "
 
         # 시장 개장 상태에 따라 제목 결정
         if is_kr_open and is_us_open:
@@ -676,10 +931,10 @@ class StockDataUpdater:
             cal_desc_parts.append("")
         
         
-        # 시장 상세 리포트 (주요종목 + 특이종목 통합)
+        # 시장 상세 리포트 (주요종목 + 주의종목 통합)
         if unusual_summary != "N/A":
-            cal_desc_parts.append("## 📊 시장 상세 리포트")
-            cal_desc_parts.append(unusual_summary)
+            cal_desc_parts.append("## 📊 시장 상세 리포트 (주의종목)")
+            cal_desc_parts.append(row_data[3]) # 시트에 이미 병합된 '누적' 데이터를 사용
             cal_desc_parts.append("")
         
         # 링크
@@ -818,12 +1073,13 @@ class StockDataUpdater:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("date", nargs="?", help="Target date (YYYY-MM-DD)", default=None)
+    parser.add_argument('target_date', nargs='?', default=None)
+    parser.add_argument('--mode', choices=['MORNING', 'MIDDAY', 'CLOSE', 'EVENING', 'AUTO'], default='AUTO')
     args = parser.parse_args()
-
+    
     if not SPREADSHEET_ID:
         print("ERROR: SPREADSHEET_ID is missing.")
-        exit(1)
-    
-    updater = StockDataUpdater(target_date=args.date)
-    updater.process_and_report(manual_date=True if args.date else False)
+        sys.exit(1)
+        
+    updater = StockDataUpdater(target_date=args.target_date)
+    updater.process_and_report(mode=args.mode, manual_date=(args.target_date is not None))
