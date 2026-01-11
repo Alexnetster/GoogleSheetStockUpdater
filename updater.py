@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.6.4_20260111"
+VERSION = "v2.6.5_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -328,8 +328,8 @@ class StockDataUpdater:
             
             rows.append([])
         
-        # 주요 종목 데이터 섹션 (구분: Major vs Watchlist)
-        categories_to_display = [('Major', '주요종목'), ('Watchlist', '관심종목')]
+        # 주요 종목 데이터 섹션 (구분: Major vs Crypto vs Watchlist)
+        categories_to_display = [('Major', '주요종목'), ('Crypto', '코인'), ('Watchlist', '관심종목')]
         for cat_id, cat_name in categories_to_display:
             # 보강된 필터링: blank, '관심종목' -> Watchlist / '주요종목' -> Major
             def is_match(d_cat, target_id):
@@ -337,7 +337,7 @@ class StockDataUpdater:
                 if not clean_cat: clean_cat = 'watchlist' # 기본값
                 
                 # 한글 매핑
-                mapping = {'지수': 'index', '주요종목': 'major', '관심종목': 'watchlist'}
+                mapping = {'지수': 'index', '주요종목': 'major', '관심종목': 'watchlist', '코인': 'crypto'}
                 translated_cat = mapping.get(clean_cat, clean_cat)
                 
                 return translated_cat == target_id.lower()

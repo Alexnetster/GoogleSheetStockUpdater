@@ -42,7 +42,11 @@ DEFAULT_BOOTSTRAP_DATA = [
     ['AAPL', 'Apple', 'Major', '미국 시총 상위', 'TRUE', 'TRUE'],
     ['NVDA', 'Nvidia', 'Major', 'AI 반도체 리더', 'TRUE', 'TRUE'],
     ['TSLA', 'Tesla', 'Major', '전기차/자율주행', 'TRUE', 'TRUE'],
-    ['BTC-USD', 'Bitcoin', 'Major', '크립토 대장주', 'TRUE', 'TRUE'],
+    # Crypto (24/7 Assets)
+    ['BTC-USD', 'Bitcoin', 'Crypto', '크립토 대장주', 'TRUE', 'TRUE'],
+    ['ETH-USD', 'Ethereum', 'Crypto', '알트코인 대장', 'TRUE', 'TRUE'],
+    ['XRP-USD', 'Ripple', 'Crypto', '송금 최적화 코인', 'TRUE', 'TRUE'],
+    ['SOL-USD', 'Solana', 'Crypto', '고성능 메인넷', 'TRUE', 'TRUE'],
 ]
 
 def initialize(reset_mode=False):
@@ -100,7 +104,7 @@ def initialize(reset_mode=False):
         except gspread.exceptions.WorksheetNotFound:
             print(f"[{name}] 시트 생성 중...")
             ws = sh.add_worksheet(title=name, rows=100, cols=len(config['headers']) + 1)
-            ws.update('A1', [config['headers']])
+            ws.update(values=[config['headers']], range_name='A1')
             print(f"  -> [{name}] 생성 완료.")
 
             # '관심종목_요청' 탭인 경우 기본 데이터 주입
