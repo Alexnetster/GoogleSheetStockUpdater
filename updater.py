@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.5.4_20260111"
+VERSION = "v2.5.7_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -101,6 +101,7 @@ class StockDataUpdater:
             ws = self.sh.worksheet('관심종목_관리')
             all_records = ws.get_all_records()
             for r in all_records:
+                # Use robust key matching for localization
                 category = str(r.get('카테고리', r.get('Category', ''))).strip().lower()
                 if category in ['index', '지수']:
                     ticker = str(r.get('티커', r.get('Ticker', ''))).strip()
@@ -334,7 +335,7 @@ class StockDataUpdater:
                 
                 return translated_cat == target_id.lower()
 
-            cat_data = [d for d in data if is_match(d.get('Category', ''), cat_id)]
+            cat_data = [d for d in data if is_match(d.get('Category', d.get('카테고리', '')), cat_id)]
             if not cat_data: continue
             
             rows.append([f'=== [{cat_name}] ===', '', '', '', '', '', ''])
@@ -482,7 +483,7 @@ class StockDataUpdater:
                         mgmt_ws.append_row([
                             asset_type, found_ticker, name_display, category, "", memo, "", "", "", ""
                         ])
-                        print(f"Added to management: {found_ticker}")
+                        print(f"Added/Updated in management: {found_ticker}")
                 else:
                     if ticker and ticker in mgmt_tickers:
                         # 컬럼 2(티커) 또는 3(Ticker)에서 검색 (순서 변경됨)
@@ -602,21 +603,25 @@ class StockDataUpdater:
             ticker = str(item.get('Ticker', ''))
             if not ticker: continue
             
-            category = str(item.get('Category', '')).strip().lower()
+            # Use robust key matching
+            category = str(item.get('카테고리', item.get('Category', ''))).strip().lower()
             if category in ['index', '지수']: continue # 지수는 이미 수집됨
             
             asset_type = item.get('Asset', 'US')
             
-            # 시장 개장 상태에 따른 필터링 (코인은 항상 수집)
-            if asset_type == 'KR' and not is_kr_open: continue
-            if asset_type == 'US' and not is_us_open: continue
+            # 시장 개장 상태와 상관없이 '오늘' 탭을 위해 데이터를 수집합니다 (휴장일은 마지막 거래일 종가 표시)
+            if asset_type == 'KR' and not is_kr_open:
+                # 휴장일이라도 데이터는 가져오되, 로그로 알림
+                pass
+            if asset_type == 'US' and not is_us_open:
+                pass
             
             res = self.get_stock_data([ticker], asset_type)
             if res:
                 # 시트의 사용자 메모 및 의견 병합
-                res[0]['Memo'] = item.get('Memo', '')
-                res[0]['ExpertOpinion_User'] = item.get('Expert_Opinion', '')
-                res[0]['Category'] = item.get('Category', 'Watchlist')
+                res[0]['Memo'] = item.get('메모', item.get('Memo', ''))
+                res[0]['ExpertOpinion_User'] = item.get('전문가의견', item.get('Expert_Opinion', ''))
+                res[0]['Category'] = item.get('카테고리', item.get('Category', 'Watchlist'))
                 
                 # 리포트용 요약 문구 생성
                 final_rec = item.get('Recommendation', res[0].get('Recommendation', '-'))
@@ -651,6 +656,7 @@ class StockDataUpdater:
                         if '테마' in headers: mgmt_ws.update_cell(row_idx, headers.index('테마') + 1, info.get('Theme', '-'))
                         if '시스템추천' in headers: mgmt_ws.update_cell(row_idx, headers.index('시스템추천') + 1, info.get('Recommendation', '-'))
                         if '정보링크' in headers: mgmt_ws.update_cell(row_idx, headers.index('정보링크') + 1, info.get('InfoLink', ''))
+                        if '종목명' in headers: mgmt_ws.update_cell(row_idx, headers.index('종목명') + 1, info.get('Name', ''))
                     except Exception as e:
                         print(f"Error updating mgmt row for {ticker}: {e}")
         except Exception as e:

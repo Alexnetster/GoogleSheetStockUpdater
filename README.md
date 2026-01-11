@@ -155,8 +155,9 @@ GoogleSheetStockUpdater/
 1.  **GitHub Repo -> Actions 탭**으로 이동합니다.
 2.  **`Maintenance - Sheet Recovery`** 워크플로우를 선택합니다.
 3.  **`Run workflow`** 버튼을 클릭하고 모드를 선택합니다:
-    *   **`CHECK` (권장)**: 모든 탭(과거 월별 기록 포함)의 헤더를 최신 한글 구조로 자동 교정하고, 부족한 탭을 생성합니다. (기존 데이터 유지)
-    *   **`RESET`**: 모든 시트를 삭제하고 공장 초기화 상태로 되돌립니다. (주의: `confirm_reset` 칸에 `RESET`을 입력해야 실행됨)
+    - **CHECK 모드 (권장)**: 모든 탭(과거 월별 기록 포함)의 헤더를 최신 한글 구조로 자동 교정하고, 부족한 탭을 생성합니다. (기본 지수 데이터 복구 포함, 기존 데이터 유지)
+    - **RESET 모드**: 모든 시트를 삭제하고 공장 초기화 상태로 되돌립니다. (주의: `confirm_reset` 칸에 `yes`를 입력해야 실행됨)
+    - **실행 방법**: GitHub Actions 탭 -> `Maintenance - Sheet Recovery` 선택 -> `Run workflow` 클릭
 
 로컬에서 직접 실행하려면 다음 명령을 사용하세요:
 
