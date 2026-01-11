@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.5.7_20260111"
+VERSION = "v2.5.9_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -418,9 +418,23 @@ class StockDataUpdater:
             current_mgmt = mgmt_ws.get_all_records()
             mgmt_tickers = [str(r.get('티커', r.get('Ticker', ''))) for r in current_mgmt]
             
-            # 3. 요청 처리 및 동기화
+            # 3. 요청 처리 및 동기화 준비
             final_watchlist = []
+            status_updates = [] # '검색결과' 컬럼 업데이트용
+            name_updates = []   # '종목명' 컬럼 업데이트용 (v2.5.9)
+            rows_to_add = []    # '관심종목_관리'에 추가할 행들
+            tickers_to_remove = [] # '관심종목_관리'에서 삭제할 티커들
             
+            # TickerFound(검색결과) 및 종목명 필드 인덱스 찾기
+            headers_rq = rq_ws.row_values(1)
+            found_col_idx = 6 # 기본값
+            name_col_idx = 2  # 기본값
+            if '검색결과' in headers_rq: found_col_idx = headers_rq.index('검색결과') + 1
+            elif 'TickerFound' in headers_rq: found_col_idx = headers_rq.index('TickerFound') + 1
+            
+            if '종목명' in headers_rq: name_col_idx = headers_rq.index('종목명') + 1
+            elif 'Name' in headers_rq: name_col_idx = headers_rq.index('Name') + 1
+
             for i, req in enumerate(requests):
                 ticker = str(get_val(req, '티커', 'Ticker')).strip()
                 name_req = str(get_val(req, '종목명', 'Name')).strip()
@@ -428,17 +442,18 @@ class StockDataUpdater:
                 category = str(get_val(req, '카테고리', 'Category')).strip()
                 memo = get_val(req, '메모', 'Memo')
                 
-                if not (ticker or name_req): continue
+                if not (ticker or name_req):
+                    status_updates.append("") # 빈 줄 대응
+                    continue
                 
+                # 티커 보정 (숫자만 있는 경우 6자리로 맞춰 한국 주식 대응)
+                if ticker.isdigit() and len(ticker) < 6:
+                    ticker = ticker.zfill(6)
+                    print(f"Normalized ticker: {ticker}")
+
                 found_ticker = None
                 asset_type = 'US'
                 
-                # TickerFound 필드 인덱스 찾기
-                headers = rq_ws.row_values(1)
-                found_col_idx = 6 # 기본값
-                if '검색결과' in headers: found_col_idx = headers.index('검색결과') + 1
-                elif 'TickerFound' in headers: found_col_idx = headers.index('TickerFound') + 1
-
                 # Ticker/Name으로 종목 찾기
                 if ticker:
                     try:
@@ -462,7 +477,13 @@ class StockDataUpdater:
                             break
                 
                 found_status = 'TRUE' if found_ticker else 'FALSE'
-                rq_ws.update_cell(i + 2, found_col_idx, found_status)
+                status_updates.append(found_status)
+                
+                # 종목명 자동 채우기 준비 (v2.5.9)
+                current_name = name_req
+                if found_ticker and not current_name:
+                    current_name = self.kr_name_map.get(found_ticker, found_ticker)
+                name_updates.append(current_name)
                 
                 if enabled and found_ticker:
                     # 현재 관리 시트에서 기존 정보(알림가 등) 유지용 데이터 찾기
@@ -480,19 +501,47 @@ class StockDataUpdater:
                     if found_ticker not in mgmt_tickers:
                         name_display = self.kr_name_map.get(found_ticker, name_req or found_ticker)
                         # 새 필드 구조 적용: 구분, 티커, 종목명, 카테고리, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크
-                        mgmt_ws.append_row([
+                        rows_to_add.append([
                             asset_type, found_ticker, name_display, category, "", memo, "", "", "", ""
                         ])
-                        print(f"Added/Updated in management: {found_ticker}")
+                        mgmt_tickers.append(found_ticker) # 중복 동시 추가 방지
                 else:
                     if ticker and ticker in mgmt_tickers:
-                        # 컬럼 2(티커) 또는 3(Ticker)에서 검색 (순서 변경됨)
-                        ticker_col = 2 if '티커' in mgmt_ws.row_values(1) else 3
-                        cells = mgmt_ws.findall(ticker, in_column=ticker_col)
-                        for cell in cells:
-                            mgmt_ws.delete_rows(cell.row)
-                            print(f"Removed from management: {ticker}")
-                rq_ws.update_cell(i + 2, found_col_idx, found_status)
+                        tickers_to_remove.append(ticker)
+
+            # 4. Batch Updates 실행 (API 할당량 절약)
+            
+            # 4-1. 요청 시트의 검색결과 및 종목명 일괄 업데이트
+            if status_updates:
+                range_found = f"{gspread.utils.rowcol_to_a1(2, found_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, found_col_idx)}"
+                rq_ws.update(values=[[s] for s in status_updates], range_name=range_found)
+                
+                # 종목명 업데이트 (비어있던 칸이 채워진 경우만)
+                range_name = f"{gspread.utils.rowcol_to_a1(2, name_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, name_col_idx)}"
+                rq_ws.update(values=[[n] for n in name_updates], range_name=range_name)
+                
+                print(f"Batch updated search results and names for {len(status_updates)} items.")
+
+            # 4-2. 관리 시트에 새 종목 일괄 추가
+            if rows_to_add:
+                mgmt_ws.append_rows(rows_to_add)
+                for r in rows_to_add: print(f"Added to management: {r[1]}")
+
+            # 4-3. 관리 시트에서 비활성 종목 일괄 삭제
+            if tickers_to_remove:
+                headers_mgmt = mgmt_ws.row_values(1)
+                ticker_col = (headers_mgmt.index('티커') + 1) if '티커' in headers_mgmt else ((headers_mgmt.index('Ticker') + 1) if 'Ticker' in headers_mgmt else 2)
+                
+                # 삭제 시 인덱스가 변하므로 뒤에서부터 삭제
+                all_cells = mgmt_ws.get_all_values()
+                rows_to_del = []
+                for i, row in enumerate(all_cells[1:], start=2):
+                    if row[ticker_col-1] in tickers_to_remove:
+                        rows_to_del.append(i)
+                
+                for r_idx in sorted(rows_to_del, reverse=True):
+                    mgmt_ws.delete_rows(r_idx)
+                    print(f"Removed row {r_idx} from management.")
 
             return mgmt_ws.get_all_records()
 
