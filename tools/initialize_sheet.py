@@ -86,9 +86,11 @@ def initialize(reset_mode=False):
     for name, config in SHEET_SCHEMA.items():
         try:
             ws = sh.worksheet(name)
-            print(f"[{name}] 시트 확인 완료.")
-            
-            # 헤더 검증 및 자동 보정
+            # 헤더 검증 및 자동 보정 (대시보드 성격의 '오늘' 탭은 제외)
+            if name == '오늘':
+                print(f"[{name}] 시트 확인 완료 (대시보드).")
+                continue
+
             current_headers = ws.row_values(1)
             if current_headers != config['headers']:
                 print(f"  ! [{name}] 헤더 구버전/불일치 발견. 최신 한글 헤더로 교체합니다.")
