@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.5.3_20260111"
+VERSION = "v2.5.4_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -408,12 +408,11 @@ class StockDataUpdater:
             # 한글/영어 키 모두 대응 (과도기 지원)
             def get_val(r, kor, eng): return r.get(kor, r.get(eng, ''))
 
-            # 2. 관심종목_관리 시트 로드 (없으면 생성)
             try:
                 mgmt_ws = self.sh.worksheet('관심종목_관리')
             except gspread.exceptions.WorksheetNotFound:
                 mgmt_ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
-                mgmt_ws.append_row(['구분', '카테고리', '티커', '종목명', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
+                mgmt_ws.append_row(['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
             
             current_mgmt = mgmt_ws.get_all_records()
             mgmt_tickers = [str(r.get('티커', r.get('Ticker', ''))) for r in current_mgmt]
@@ -479,15 +478,15 @@ class StockDataUpdater:
                     
                     if found_ticker not in mgmt_tickers:
                         name_display = self.kr_name_map.get(found_ticker, name_req or found_ticker)
-                        # 새 필드 구조 적용: 구분, 카테고리, 티커, 종목명, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크
+                        # 새 필드 구조 적용: 구분, 티커, 종목명, 카테고리, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크
                         mgmt_ws.append_row([
-                            asset_type, category, found_ticker, name_display, "", memo, "", "", "", ""
+                            asset_type, found_ticker, name_display, category, "", memo, "", "", "", ""
                         ])
                         print(f"Added to management: {found_ticker}")
                 else:
                     if ticker and ticker in mgmt_tickers:
-                        # 컬럼 3(티커) 또는 2(Ticker)에서 검색
-                        ticker_col = 3 if '티커' in mgmt_ws.row_values(1) else 2
+                        # 컬럼 2(티커) 또는 3(Ticker)에서 검색 (순서 변경됨)
+                        ticker_col = 2 if '티커' in mgmt_ws.row_values(1) else 3
                         cells = mgmt_ws.findall(ticker, in_column=ticker_col)
                         for cell in cells:
                             mgmt_ws.delete_rows(cell.row)
@@ -645,7 +644,7 @@ class StockDataUpdater:
                 info = next((d for d in market_all if d['Ticker'] == ticker), None)
                 if info:
                     row_idx = i + 2
-                    # 필드 맵핑 (구분, 카테고리, 티커, 종목명, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크)
+                    # 필드 맵핑 (구분, 티커, 종목명, 카테고리, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크)
                     # 영어/한글 혼용 대응을 위해 인덱스 기반 업데이트 권장
                     headers = mgmt_ws.row_values(1)
                     try:
