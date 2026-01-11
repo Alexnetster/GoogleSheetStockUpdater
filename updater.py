@@ -492,7 +492,7 @@ class StockDataUpdater:
                         for cell in cells:
                             mgmt_ws.delete_rows(cell.row)
                             print(f"Removed from management: {ticker}")
-                rq_ws.update_cell(row_idx, found_col_idx, found_status)
+                rq_ws.update_cell(i + 2, found_col_idx, found_status)
 
             return mgmt_ws.get_all_records()
 
@@ -742,6 +742,7 @@ class StockDataUpdater:
         
         watch_summary = "\n".join(watch_summary_lines)
         
+        unusual_summary_lines = []
         # 1. [주요종목] 섹션 (시트에서 'Major'로 태깅된 것만 표시)
         major_list = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
         if major_list:
