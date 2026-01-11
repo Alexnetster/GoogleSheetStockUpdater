@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.6.0_20260111"
+VERSION = "v2.6.1_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -613,7 +613,10 @@ class StockDataUpdater:
     def process_and_report(self, mode="AUTO", manual_date=False):
         print(f"--- Running Updater (Mode: {mode}, Target: {self.target_date}) ---")
         
-        print("1. 수집 중: 시장 지표 및 실제 거래일 확인...")
+        print("1. 동기화 중: 관심종목_요청 내역 반영...")
+        watchlist_raw = self.get_watchlist()
+        
+        print("2. 수집 중: 시장 지표 및 실제 거래일 확인...")
         indices = self.get_market_indices()
         
         # 실제 데이터 날짜 기반으로 target_date 자동 조정 (수동 입력이 아닐 경우)
@@ -669,8 +672,7 @@ class StockDataUpdater:
 
         print(f">>> 시장 개장 상태: 한국={is_kr_open}, 미국={is_us_open}")
 
-        print("2. 수집 중: 관심종목 (개장된 시장만)...")
-        watchlist_raw = self.get_watchlist()
+        print("3. 수집 중: 개인 관심종목 데이터...")
         watch_data = [] # 개인 관심종목
         major_data = [] # 주요 종목 (지수 옆 표시용)
         
