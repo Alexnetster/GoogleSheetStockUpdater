@@ -19,20 +19,84 @@ class StockDataVerifier(StockDataUpdater):
         print(f"DEBUG: Verification mode active. Logs will be saved to: {self.log_dir}")
         if self.debug_mode:
             print("DEBUG: Dry-run active. Google Sheets/Calendar will NOT be modified.")
+            # 가상 시트 데이터 설정 (API 호출 방지)
+            self._mock_sheet_data()
 
+    def _mock_sheet_data(self):
+        """Dry-run 시 API 호출을 대신할 더미 데이터 설정"""
+        print("DEBUG: Mocking Google Sheets & Calendar API for dry-run...")
+        
+        # 1. 캘린더 서비스 모의 객체 생성
+        class MockService:
+            def events(self):
+                class MockEvents:
+                    def list(self, **kwargs):
+                        class MockList:
+                            def execute(self): return {'items': []}
+                        return MockList()
+                    def delete(self, **kwargs):
+                        class MockDelete:
+                            def execute(self): return {}
+                        return MockDelete()
+                    def insert(self, **kwargs):
+                        class MockInsert:
+                            def execute(self): return {'htmlLink': 'http://localhost/mock-event'}
+                        return MockInsert()
+                return MockEvents()
+        self.calendar_service = MockService()
+
+        # 2. get_watchlist 가로채기
+        orig_get_watchlist = self.get_watchlist
+        def mocked_get_watchlist():
+            print("   [MOCK] Providing dummy watchlist data.")
+            return [
+                {'Asset': 'KR', 'Ticker': '005930', 'Name': '삼성전자', 'Category': 'Major', '메모': '삼성 반등 기원', '전문가의견': '매수'},
+                {'Asset': 'US', 'Ticker': 'AAPL', 'Name': 'Apple Inc.', 'Category': 'Major', 'Memo': '아이폰 호재'},
+                {'Asset': 'KR', 'Ticker': '000660', 'Name': 'SK하이닉스', 'Category': 'Watchlist', 'Recommendation': 'Buy'},
+                {'Asset': 'Coin', 'Ticker': 'BTC', 'Name': 'Bitcoin', 'Category': 'Crypto'}
+            ]
+        self.get_watchlist = mocked_get_watchlist
+
+        # 3. get_market_indices 가로채기
+        def mocked_get_indices():
+            print("   [MOCK] Providing dummy market indices.")
+            # 주말이면 직전 금요일 날짜로 셋팅하여 휴장 상황 시뮬레이션
+            last_trading = self.target_date
+            while last_trading.weekday() >= 5:
+                last_trading -= datetime.timedelta(days=1)
+            
+            return {
+                'KOSPI': {'price': 2500.0, 'change': 10.0, 'rate': 0.4, 'date': last_trading.isoformat(), 'category': 'index'},
+                'S&P500': {'price': 4700.0, 'change': 20.0, 'rate': 0.42, 'date': last_trading.isoformat(), 'category': 'index'},
+                'USD/KRW': {'price': 1300.0, 'change': 5.0, 'rate': 0.38, 'date': last_trading.isoformat(), 'category': 'exchange'}
+            }
+        self.get_market_indices = mocked_get_indices
+
+        # 4. get_stock_data 가로채기 (실제 yfinance 호출 방지 및 속도 향상)
+        def mocked_get_stock_data(tickers, asset_type):
+            res = []
+            for t in tickers:
+                res.append({
+                    'Asset': asset_type, 'Ticker': t, 'Name': f"Mock_{t}", 
+                    'Price': 100.0, 'FormattedPrice': '100.0', 'ChangeRate': 1.5, 
+                    'Volume': 1000000, 'MarketCap': 1000000000, 'Recommendation': 'HOLD'
+                })
+            return res
+        self.get_stock_data = mocked_get_stock_data
+
+        # 5. 기타 시트 작업 가로채기 (get_monthly_worksheet 등)
+        self.get_monthly_worksheet = lambda: None
+        
     def _log_payload(self, target, data):
-        """부모 클래스의 훅을 오버라이드하여 파일로 저장"""
+        # ... (생략 가능하지만 유지)
         file_path = os.path.join(self.log_dir, f"{target}.json")
         try:
-            # JSON 직렬화 가능 여부 확인 (datetime 등 처리)
             def json_default(obj):
-                if isinstance(obj, (datetime.date, datetime.datetime)):
-                    return obj.isoformat()
-                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
+                if isinstance(obj, (datetime.date, datetime.datetime)): return obj.isoformat()
+                return str(obj)
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2, default=json_default)
-            print(f"   [LOG] Payload saved: {file_path}")
+            print(f"   [LOG] Payload saved: {target}.json")
         except Exception as e:
             print(f"   [ERROR] Failed to save log {target}: {e}")
 

@@ -3,3 +3,5 @@
 .env
 ,googleclude/stable-vista.json
 *.pyc
+/debug_logs
+/debug_logs

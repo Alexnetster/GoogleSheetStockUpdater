@@ -7,6 +7,7 @@
 - **제로 하드코딩 (Zero Hardcoding)**: 소스 수정 없이 시트에서 직접 지수(Index), 주요종목(Major), 관심종목(Watchlist) 관리 (v2.4.2)
 - **자동 데이터 수집**: 한국/미국 주식, 주요 지수,
 - **버전 히스토리**:
+  - v2.7.0: 주말 시장 상태 오출력 수정 및 휴장일 데이터 가시성 개선 (Today 탭 필터링 완화)
   - v2.6.9: 로컬 검증 시스템(tools/verify_sync.py) 도입 및 데이터 싱크 정합성 강화
   - v2.6.8: 세션 기반 '오늘' 탭 레이아웃 및 캘린더 연동 최적화 (MORNING/MIDDAY/CLOSE/EVENING)
   - v2.6.7: 리포트 3대 체제([주요/관심/특이]) 국가별 세분화 및 과거 데이터 동기화 정책 고도화
@@ -232,3 +233,8 @@ KRX:005930	삼성전자	코스피	#N/A	#N/A			Samsung Electronics Co Ltd	#N/A
 =IFERROR(INDEX(IMPORTXML("https://finance.naver.com/item/main.naver?code="&SUBSTITUTE(A2,":",""),"//span[contains(text(),'코스피') or contains(text(),'KOSPI')]"),1),"KOSDAQ")
 =GOOGLEFINANCE(A2, "price")
 =GOOGLEFINANCE(A2, "volume") * GOOGLEFINANCE(A2, "price")
+
+## 🚀 Next Steps
+
+- [ ] **관심종목_관리 탭 최적화**: 현재 비어 있는 컬럼들을 시스템 수집 정보(배당률, 매출 성장성 등) 또는 의미 있는 지표들로 채우는 작업 진행 예정.
+- [ ] **정교한 휴장일 감지 로직 (국내/해외)**: 단순히 주말/공휴일 체크를 넘어, `pandas_market_calendars` 라이브러리를 통해 **한국(KRX) 및 미국(NYSE/NASDAQ) 시장**의 실시간 휴장 정보 및 비상사태 등의 특수 상황까지 정확히 반영할 수 있도록 개선 예정.

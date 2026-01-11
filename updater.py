@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.6.9_20260111"
+VERSION = "v2.7.0_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -289,23 +289,28 @@ class StockDataUpdater:
             ws = self.sh.add_worksheet(title=sheet_name, rows=200, cols=10)
         
         # 1. 시트의 현재 기준 일자 확인 및 초기화 여부 결정
-        first_col = ws.col_values(1)
-        existing_date = ""
-        for val in first_col:
-            if "기준 일자:" in val:
-                existing_date = val.split("기준 일자:")[1].split("[")[0].strip()
-                break
-        
         target_date_str = self.target_date.strftime('%Y-%m-%d')
-        is_new_day = (target_date_str != existing_date)
-
-        if is_new_day:
-            ws.clear()
+        if self.debug_mode:
+            print("   [DEBUG] Dry-run: Skipping 'Today' sheet existence check. Assuming new day.")
+            is_new_day = True
             start_row = 1
         else:
-            # 같은 날이면 기존 내용 유지하고 아래에 추가 (빈 행 2개 뒤)
-            existing_values = ws.get_all_values()
-            start_row = len(existing_values) + 3 if existing_values else 1
+            first_col = ws.col_values(1)
+            existing_date = ""
+            for val in first_col:
+                if "기준 일자:" in val:
+                    existing_date = val.split("기준 일자:")[1].split("[")[0].strip()
+                    break
+            
+            is_new_day = (target_date_str != existing_date)
+
+            if is_new_day:
+                ws.clear()
+                start_row = 1
+            else:
+                # 같은 날이면 기존 내용 유지하고 아래에 추가 (빈 행 2개 뒤)
+                existing_values = ws.get_all_values()
+                start_row = len(existing_values) + 3 if existing_values else 1
 
         rows = []
         
@@ -344,9 +349,9 @@ class StockDataUpdater:
                 is_us_idx = k in ['S&P500', 'NASDAQ', 'Dow Jones']
                 is_exchange = (v.get('category') == 'exchange' or k == 'USD/KRW')
                 
-                # 휴장이면 해당 지수 갱신 안함
-                if is_kr_idx and not is_kr_open: continue
-                if is_us_idx and not is_us_open: continue
+                # [v2.7.0] 휴장이라도 수집된 지수가 있으면 표시 (필터링 제거)
+                # if is_kr_idx and not is_kr_open: continue
+                # if is_us_idx and not is_us_open: continue
                 
                 if is_kr_idx: country, exchange = "한국", k
                 elif is_us_idx: country, exchange = "미국", k
@@ -374,8 +379,9 @@ class StockDataUpdater:
             filtered = []
             for d in sec_list:
                 asset = d.get('Asset', 'US')
-                if asset == 'KR' and not is_kr_open: continue
-                if asset == 'US' and not is_us_open: continue
+                # [v2.7.0] 휴장이라도 수집된 종목은 표시 (필터링 제거)
+                # if asset == 'KR' and not is_kr_open: continue
+                # if asset == 'US' and not is_us_open: continue
                 # Coin은 항상 포함
                 filtered.append(d)
             
@@ -687,8 +693,9 @@ class StockDataUpdater:
         is_kr_trading_day = (self.target_date.weekday() < 5)
         is_us_trading_day = (self.target_date.weekday() < 5)
         
-        is_kr_actually_open = (kospi_date == target_iso)
-        is_us_actually_open = (sp500_date == target_iso)
+        # [v2.7.0] 시장 실제로 개장 여부 (주말 강제 제외)
+        is_kr_actually_open = (kospi_date == target_iso) and is_kr_trading_day
+        is_us_actually_open = (sp500_date == target_iso) and is_us_trading_day
 
         # 리포트 및 오늘 시트 노출 여부 결정
         # 사용자의 MORNING/MIDDAY 등 세션 요구사항에 맞게 'Active' 상태 결정
@@ -696,9 +703,11 @@ class StockDataUpdater:
         is_us_active = is_us_actually_open or (is_us_trading_day and mode in ["EVENING", "MORNING", "CLOSE", "AUTO"])
         
         if manual_date:
-            # 과거 날짜는 이미 결과가 나왔으므로 데이터가 있으면 Active로 간주
-            is_kr_active = True if kospi_date else False
-            is_us_active = True if sp500_date else False
+            # [v2.6.9] 과거 날짜(manual_date)인 경우, 평일이면 무조건 Active로 간주하여 데이터 수집 및 리포트 강제 생성
+            # (지수 데이터 fetch 실패 시에도 종목 정보는 수집되어야 함)
+            is_kr_active = is_kr_trading_day
+            is_us_active = is_us_trading_day
+            print(f">>> [Manual/History] Market Active Status FORCED by Trading Day: KR={is_kr_active}, US={is_us_active}")
 
         print(f">>> 시장 상태: 한국(Active={is_kr_active}, Today={is_kr_actually_open}), 미국(Active={is_us_active}, Today={is_us_actually_open})")
         
@@ -906,7 +915,11 @@ class StockDataUpdater:
 
         print("5. 기록 중: 월별 일지 (중복 체크 포함)...")
         ws_monthly = self.get_monthly_worksheet()
-        all_dates = ws_monthly.col_values(1)
+        if self.debug_mode:
+            all_dates = []
+            print("   [DEBUG] Dry-run: Skipping Monthly data existence check.")
+        else:
+            all_dates = ws_monthly.col_values(1)
         target_iso = self.target_date.isoformat()
 
         row_data = [
@@ -967,6 +980,61 @@ class StockDataUpdater:
                 ws_monthly.append_row(row_data)
             print(f"Appended new row for {target_iso}.")
 
+        # 6. 연동 중: 구글 캘린더...
+        print("6. 연동 중: 구글 캘린더...")
+        # 캘린더 이벤트 제목 및 내용 생성
+        
+        # 시간대별 세션 태그
+        now_kst = datetime.datetime.now()
+        session_tag = ""
+        if mode == "MORNING" or (7 <= now_kst.hour <= 9): session_tag = " [모닝]"
+        elif mode == "MIDDAY" or (11 <= now_kst.hour <= 13): session_tag = " [미드데이]"
+        elif mode == "CLOSE" or (15 <= now_kst.hour <= 17): session_tag = " [장마감]"
+        elif mode == "EVENING" or (19 <= now_kst.hour <= 21): session_tag = " [이브닝]"
+
+        # 시장 개장 상태에 따라 제목 결정
+        if is_kr_open and is_us_open:
+            cal_title = f"투자일지{session_tag} 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+        elif is_kr_open:
+            cal_title = f"투자일지{session_tag}(국장) 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+        elif is_us_open:
+            cal_title = f"투자일지{session_tag}(미장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
+        else:
+            cal_title = f"투자일지{session_tag} 📅 시장 휴장"
+        
+        # 캘린더 본문 생성
+        cal_desc_parts = []
+        if not is_kr_open and not is_us_open:
+            cal_desc_parts.append("## 🚫 주식 시장 휴장")
+            cal_desc_parts.append("한국 및 미국 주식 시장은 휴장입니다.")
+            cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## ⭐ 관심종목 브리핑")
+        cal_desc_parts.append(watch_summary if watch_summary else "등록된 관심종목이 없습니다.")
+        cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## 📈 핵심 시장 지표")
+        if is_kr_open:
+            cal_desc_parts.append(f"- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%)")
+        if is_us_open:
+            cal_desc_parts.append(f"- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%)")
+        cal_desc_parts.append(f"- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f}")
+        cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## 📊 시장 상세 리포트")
+        if detailed_market_info and detailed_market_info != "N/A":
+            cal_desc_parts.append(detailed_market_info)
+        else:
+            cal_desc_parts.append("상세 데이터가 없습니다.")
+        cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## 🔗 상세 내용 보기")
+        cal_desc_parts.append(f"[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})")
+        
+        cal_desc = "\n".join(cal_desc_parts)
+        self.create_calendar_event(cal_title, cal_desc)
+        print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
+
     def _merge_report_sections(self, old_text, new_text, markers):
         """섹션 마커를 기준으로 구정보와 신정보 병합 (신정보 우선 업데이트)"""
         if not old_text or old_text == "N/A": return new_text
@@ -1009,74 +1077,6 @@ class StockDataUpdater:
         
         return "\n\n".join(ordered_parts).strip()
 
-        print("5. 연동 중: 구글 캘린더...")
-        # 캘린더 이벤트 제목 및 내용 생성
-        
-        # 시간대별 세션 태그
-        now_kst = datetime.datetime.now()
-        session_tag = ""
-        if mode == "MORNING" or (7 <= now_kst.hour <= 9): session_tag = " (모닝브리핑) "
-        elif mode == "MIDDAY" or (11 <= now_kst.hour <= 13): session_tag = " (미드데이브리핑) "
-        elif mode == "CLOSE" or (15 <= now_kst.hour <= 17): session_tag = " (장마감리뷰) "
-        elif mode == "EVENING" or (19 <= now_kst.hour <= 21): session_tag = " (이브닝브리핑) "
-
-        # 시장 개장 상태에 따라 제목 결정
-        if is_kr_open and is_us_open:
-            # 양쪽 다 개장
-            cal_title = f"투자일지{session_tag}📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
-        elif is_kr_open:
-            # 한국만 개장
-            cal_title = f"투자일지{session_tag}(미장 휴장) 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
-        elif is_us_open:
-            # 미국만 개장
-            cal_title = f"투자일지{session_tag}(국장 휴장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
-        else:
-            # 양쪽 다 휴장
-            cal_title = f"투자일지{session_tag}📅 주식 시장 휴장"
-        
-        # 캘린더 본문 생성
-        cal_desc_parts = []
-        
-        # 휴장 안내
-        if not is_kr_open and not is_us_open:
-            cal_desc_parts.append("## 🚫 주식 시장 휴장")
-            cal_desc_parts.append("한국 및 미국 주식 시장은 휴장입니다.")
-            cal_desc_parts.append("")
-        elif not is_kr_open:
-            cal_desc_parts.append("## 🚫 한국 시장 휴장")
-            cal_desc_parts.append("한국 주식 시장은 휴장입니다.")
-            cal_desc_parts.append("")
-        elif not is_us_open:
-            cal_desc_parts.append("## 🚫 미국 시장 휴장")
-            cal_desc_parts.append("미국 주식 시장은 휴장입니다.")
-            cal_desc_parts.append("")
-        
-        # 관심종목
-        cal_desc_parts.append("## ⭐ 관심종목 브리핑")
-        cal_desc_parts.append(watch_summary if watch_summary else "등록된 관심종목이 없습니다.")
-        cal_desc_parts.append("")
-        
-        # 시장 지표 (개장한 시장만 표시)
-        if is_kr_open or is_us_open:
-            cal_desc_parts.append("## 📈 핵심 시장 지표")
-            if is_kr_open:
-                cal_desc_parts.append(f"- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%) / KOSDAQ {indices.get('KOSDAQ',{}).get('price',0):,.1f} ({indices.get('KOSDAQ',{}).get('rate',0):+.2f}%)")
-            if is_us_open:
-                cal_desc_parts.append(f"- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%) / NASDAQ {indices.get('NASDAQ',{}).get('price',0):,.1f} ({indices.get('NASDAQ',{}).get('rate',0):+.2f}%)")
-            cal_desc_parts.append(f"- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f} (전일대비 {indices.get('USD/KRW',{}).get('change',0):+.1f}원)")
-            cal_desc_parts.append("")
-        
-        
-        # 시장 상세 리포트 (주요종목 + 주의종목 통합)
-        if unusual_summary != "N/A":
-            cal_desc_parts.append("## 📊 시장 상세 리포트 (주의종목)")
-            cal_desc_parts.append(row_data[3]) # 시트에 이미 병합된 '누적' 데이터를 사용
-            cal_desc_parts.append("")
-        
-        # 링크
-        cal_desc_parts.append("## 🔗 상세 내용 보기")
-        cal_desc_parts.append(f"[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})")
-        
         cal_desc = "\n".join(cal_desc_parts)
         self.create_calendar_event(cal_title, cal_desc)
         print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
