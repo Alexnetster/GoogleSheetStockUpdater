@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.4.2_20260111"
+VERSION = "v2.5.3_20260111"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
