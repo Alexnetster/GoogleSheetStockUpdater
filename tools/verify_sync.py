@@ -11,9 +11,10 @@ from updater import StockDataUpdater
 class StockDataVerifier(StockDataUpdater):
     """실제 API 호출을 가로채고 로컬 파일로 로그를 남기는 검증용 클래스"""
     
-    def __init__(self, target_date=None, dry_run=True):
+    def __init__(self, target_date=None, dry_run=True, real_watchlist=False):
         super().__init__(target_date=target_date)
         self.debug_mode = dry_run # True이면 실제 API 호출(update 등)을 스킵함
+        self.real_watchlist = real_watchlist
         self.log_dir = os.path.join("debug_logs", self.target_date.isoformat())
         os.makedirs(self.log_dir, exist_ok=True)
         print(f"DEBUG: Verification mode active. Logs will be saved to: {self.log_dir}")
@@ -45,17 +46,20 @@ class StockDataVerifier(StockDataUpdater):
                 return MockEvents()
         self.calendar_service = MockService()
 
-        # 2. get_watchlist 가로채기
-        orig_get_watchlist = self.get_watchlist
-        def mocked_get_watchlist():
-            print("   [MOCK] Providing dummy watchlist data.")
-            return [
-                {'Asset': 'KR', 'Ticker': '005930', 'Name': '삼성전자', 'Category': 'Major', '메모': '삼성 반등 기원', '전문가의견': '매수'},
-                {'Asset': 'US', 'Ticker': 'AAPL', 'Name': 'Apple Inc.', 'Category': 'Major', 'Memo': '아이폰 호재'},
-                {'Asset': 'KR', 'Ticker': '000660', 'Name': 'SK하이닉스', 'Category': 'Watchlist', 'Recommendation': 'Buy'},
-                {'Asset': 'Coin', 'Ticker': 'BTC', 'Name': 'Bitcoin', 'Category': 'Crypto'}
-            ]
-        self.get_watchlist = mocked_get_watchlist
+        # 2. get_watchlist 가로채기 (real_watchlist 옵션 시 생략)
+        if not self.real_watchlist:
+            orig_get_watchlist = self.get_watchlist
+            def mocked_get_watchlist():
+                print("   [MOCK] Providing dummy watchlist data. (Use --real-watchlist to fetch actual)")
+                return [
+                    {'Asset': 'KR', 'Ticker': '005930', 'Name': '삼성전자', 'Category': 'Major', '메모': '삼성 반등 기원', '전문가의견': '매수'},
+                    {'Asset': 'US', 'Ticker': 'AAPL', 'Name': 'Apple Inc.', 'Category': 'Major', 'Memo': '아이폰 호재'},
+                    {'Asset': 'KR', 'Ticker': '000660', 'Name': 'SK하이닉스', 'Category': 'Watchlist', 'Recommendation': 'Buy'},
+                    {'Asset': 'Coin', 'Ticker': 'BTC', 'Name': 'Bitcoin', 'Category': 'Crypto'}
+                ]
+            self.get_watchlist = mocked_get_watchlist
+        else:
+            print("   [INFO] Using REAL Watchlist data (Read-Only Mode).")
 
         # 3. get_market_indices 가로채기
         def mocked_get_indices():
@@ -105,6 +109,7 @@ def main():
     parser.add_argument("--date", help="Verification date (YYYY-MM-DD)", default=None)
     parser.add_argument("--mode", help="Session mode (MORNING, MIDDAY, CLOSE, EVENING, AUTO)", default="AUTO")
     parser.add_argument("--real", help="Actually update Google Sheets (Danger!)", action="store_true")
+    parser.add_argument("--real-watchlist", help="Fetch real watchlist data while keeping dry-run safety", action="store_true")
     
     args = parser.parse_args()
     
@@ -114,7 +119,7 @@ def main():
     print(f"\n=== 🏁 Verification Start: {target_date} (DryRun={is_dry_run}) ===")
     
     try:
-        verifier = StockDataVerifier(target_date=target_date, dry_run=is_dry_run)
+        verifier = StockDataVerifier(target_date=target_date, dry_run=is_dry_run, real_watchlist=args.real_watchlist)
         # process_and_report 실행 (manual_date=True로 설정하여 과거 데이터 처리 가능하도록 함)
         verifier.process_and_report(mode=args.mode, manual_date=True)
         

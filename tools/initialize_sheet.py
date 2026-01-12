@@ -24,6 +24,10 @@ SHEET_SCHEMA = {
     '관심종목_관리': {
         'headers': ['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'],
         'description': '시스템 동기화 및 데이터 관리 레이어 (DB)'
+    },
+    '주의종목_버퍼': {
+        'headers': ['Date', 'Asset', 'Ticker', 'Name', 'Price', 'Change', 'Volume', 'Source'],
+        'description': '일간 특이 종목 누적 버퍼 (매일 초기화)'
     }
 }
 
@@ -114,7 +118,8 @@ def initialize(reset_mode=False):
 
     # 4. 월별 탭(YYYY-MM) 헤더 보정
     print("\n[월별 일지] 시트 점검 중...")
-    monthly_headers = ['날짜', '시장 요약', '관심종목 현황', '주의종목', '갱신날짜']
+    # [v2.7.0] 7-Column Schema
+    monthly_headers = ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
     for ws in sh.worksheets():
         # YYYY-MM 형식의 제목인지 확인
         title = ws.title

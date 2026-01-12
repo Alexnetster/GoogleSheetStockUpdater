@@ -277,8 +277,8 @@ class StockDataUpdater:
                 print(f"Error fetching {asset_type} {ticker}: {e}")
         return data
 
-    def update_global_data(self, data, indices=None, is_kr_open=True, is_us_open=True, mode="AUTO"):
-        """'오늘' 시트 갱신: 날짜 변경 시 초기화, 같은 날이면 세션 로그 추가 (필터링 적용)"""
+    def update_today_data(self, data, indices=None, is_kr_open=True, is_us_open=True, mode="AUTO", cautionary_list=[]):
+        """'오늘' 시트 갱신: Dashboard Mode (항상 덮어쓰기)"""
         # [v2.6.9] 데이터 검증용 로그
         self._log_payload("today_raw", {"data": data, "indices": indices})
         
@@ -288,33 +288,21 @@ class StockDataUpdater:
         except gspread.exceptions.WorksheetNotFound:
             ws = self.sh.add_worksheet(title=sheet_name, rows=200, cols=10)
         
-        # 1. 시트의 현재 기준 일자 확인 및 초기화 여부 결정
-        target_date_str = self.target_date.strftime('%Y-%m-%d')
+        # 1. Dashboard Mode: Always Clear and Overwrite
         if self.debug_mode:
-            print("   [DEBUG] Dry-run: Skipping 'Today' sheet existence check. Assuming new day.")
-            is_new_day = True
-            start_row = 1
+             print("   [DEBUG] Dry-run: Skipping 'Today' sheet clear.")
+             start_row = 1
         else:
-            first_col = ws.col_values(1)
-            existing_date = ""
-            for val in first_col:
-                if "기준 일자:" in val:
-                    existing_date = val.split("기준 일자:")[1].split("[")[0].strip()
-                    break
-            
-            is_new_day = (target_date_str != existing_date)
-
-            if is_new_day:
-                ws.clear()
-                start_row = 1
-            else:
-                # 같은 날이면 기존 내용 유지하고 아래에 추가 (빈 행 2개 뒤)
-                existing_values = ws.get_all_values()
-                start_row = len(existing_values) + 3 if existing_values else 1
+             try:
+                 ws.clear()
+                 print("   [Info] 'Today' sheet cleared for Dashboard update.")
+             except: pass
+             start_row = 1
 
         rows = []
         
         # 세션명 결정
+        target_date_str = self.target_date.strftime('%Y-%m-%d')
         now = datetime.datetime.now()
         now_time_str = now.strftime('%H:%M:%S')
         weekdays = ["월", "화", "수", "목", "금", "토", "일"]
@@ -371,7 +359,8 @@ class StockDataUpdater:
         sections = [
             ('⭐ [관심종목]', watch_data),
             ('📌 [주요종목]', major_data),
-            ('🪙 [코인]', crypto_data)
+            ('🪙 [코인]', crypto_data),
+            ('🚨 [주의종목]', cautionary_list)
         ]
 
         for sec_name, sec_list in sections:
@@ -391,10 +380,10 @@ class StockDataUpdater:
             rows.append(['자산', '티커', '종목명', '현재가', '변동률', '거래량', '시총'])
             for d in filtered:
                 rows.append([
-                    d['Asset'], d['Ticker'], d['Name'], 
-                    d['FormattedPrice'], f"{d['ChangeRate']:+.2f}%", 
-                    self._format_large_number(d['Volume']), 
-                    self._format_large_number(d['MarketCap'])
+                    d.get('Asset', '-'), d.get('Ticker', '-'), d.get('Name', '-'), 
+                    d.get('FormattedPrice', '-'), f"{d.get('ChangeRate', 0):+.2f}%", 
+                    self._format_large_number(d.get('Volume', 0)), 
+                    self._format_large_number(d.get('MarketCap', 0))
                 ])
             rows.append([])
 
@@ -435,6 +424,74 @@ class StockDataUpdater:
         except: pass
         return "-"
 
+    def manage_cautionary_buffer(self, new_items):
+        """'주의종목_버퍼' 탭을 관리하여 일간 누적 데이터를 반환"""
+        sheet_name = '주의종목_버퍼'
+        try:
+            ws = self.sh.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            if not self.debug_mode:
+                ws = self.sh.add_worksheet(title=sheet_name, rows=500, cols=8)
+                ws.append_row(['Date', 'Asset', 'Ticker', 'Name', 'Price', 'Change', 'Volume', 'Source'])
+            else:
+                return new_items
+
+        # 1. 초기화 여부 확인 (날짜 변경 시 Clear)
+        target_date_str = self.target_date.strftime('%Y-%m-%d')
+        if not self.debug_mode:
+            try:
+                first_row = ws.row_values(1)
+                first_val = ws.acell('A2').value if len(ws.col_values(1)) > 1 else None
+                
+                # 시트가 비어있거나, 날짜가 다르면 초기화
+                if not first_val or first_val != target_date_str:
+                    ws.clear()
+                    ws.append_row(['Date', 'Asset', 'Ticker', 'Name', 'Price', 'Change', 'Volume', 'Source'])
+                    print(f" [Buffer] New day detected. Cleared '{sheet_name}'.")
+            except: pass
+
+        # 2. 기존 데이터 로드 (누적용)
+        existing_tickers = set()
+        current_rows = []
+        if not self.debug_mode:
+            raw_data = ws.get_all_records()
+            for r in raw_data:
+                # 키: (Asset, Ticker)
+                key = (r.get('Asset'), str(r.get('Ticker')))
+                existing_tickers.add(key)
+                current_rows.append(r) # 로컬 변환용
+        
+        # 3. 새로운 데이터 병합
+        rows_to_add = []
+        final_list = list(current_rows) # 기존 데이터로 시작
+        
+        for item in new_items:
+            key = (item.get('Asset'), str(item.get('Ticker')))
+            if key not in existing_tickers:
+                # 시트 추가용 행
+                row = [
+                    target_date_str,
+                    item.get('Asset', ''),
+                    item.get('Ticker', ''),
+                    item.get('Name', ''),
+                    item.get('FormattedPrice', ''),
+                    item.get('ChangeRate', 0),
+                    item.get('Volume', 0),
+                    item.get('Source', '')
+                ]
+                rows_to_add.append(row)
+                existing_tickers.add(key)
+                
+                # 반환 리스트에도 포맷 맞춰 추가
+                final_list.append(item)
+        
+        # 4. 시트 업데이트
+        if rows_to_add and not self.debug_mode:
+            ws.append_rows(rows_to_add)
+            print(f" [Buffer] Added {len(rows_to_add)} new items to '{sheet_name}'.")
+            
+        return final_list
+
     def get_watchlist(self):
         """관심종목_요청 기반으로 관심종목_관리 동기화 및 데이터 반환"""
         try:
@@ -443,11 +500,17 @@ class StockDataUpdater:
                 rq_ws = self.sh.worksheet('관심종목_요청')
             except gspread.exceptions.WorksheetNotFound:
                 # 구버전 호환 또는 신규 생성
-                rq_ws = self.sh.add_worksheet(title='관심종목_요청', rows=100, cols=6)
-                rq_ws.append_row(['티커', '종목명', '카테고리', '메모', '사용여부', '검색결과'])
-                print("Created '관심종목_요청' sheet.")
+                if not self.debug_mode:
+                    rq_ws = self.sh.add_worksheet(title='관심종목_요청', rows=100, cols=6)
+                    rq_ws.append_row(['티커', '종목명', '카테고리', '메모', '사용여부', '검색결과'])
+                    print("Created '관심종목_요청' sheet.")
+                else:
+                    return [] # Dry-run에서 시트 없으면 빈 리스트 반환 혹은 에러 처리
             
             requests = rq_ws.get_all_records()
+            # [v2.7.0] 초기 요청 데이터 로그 (검증용)
+            self._log_payload("watchlist_request", requests)
+            
             # 한글/영어 키 모두 대응 (과도기 지원)
             def get_val(r, kor, eng): return r.get(kor, r.get(eng, ''))
 
@@ -455,8 +518,13 @@ class StockDataUpdater:
             try:
                 mgmt_ws = self.sh.worksheet('관심종목_관리')
             except gspread.exceptions.WorksheetNotFound:
-                mgmt_ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
-                mgmt_ws.append_row(['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
+                if not self.debug_mode:
+                    mgmt_ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
+                    mgmt_ws.append_row(['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
+                else:
+                    # Dry-run 시 시트가 없으면 진행 불가하므로 빈 리스트 반환
+                    print("Debug Mode: '관심종목_관리' sheet not found.")
+                    return []
             
             current_mgmt = mgmt_ws.get_all_records()
             # 중복 체크 고도화: (국가, 티커) 튜플로 관리 (v2.6.0)
@@ -575,8 +643,9 @@ class StockDataUpdater:
                                 mgmt_all_values = mgmt_ws.get_all_values()
                                 for idx, row in enumerate(mgmt_all_values[1:], start=2):
                                     if row[0] == asset_type and self._normalize_ticker(row[1], asset_type) == found_ticker:
-                                        mgmt_ws.update_cell(idx, cat_col, category)
-                                        print(f"Updated category for {found_ticker}: {category}")
+                                        if not self.debug_mode:
+                                            mgmt_ws.update_cell(idx, cat_col, category)
+                                        print(f"Updated category for {found_ticker}: {category} (Dry-Run: {self.debug_mode})")
                                         break
                     else:
                         # 비활성화 이거나 검색결과가 FALSE인 경우 삭제 (v2.6.6)
@@ -588,18 +657,29 @@ class StockDataUpdater:
             
             # 4-1. 요청 시트의 검색결과 및 종목명 일괄 업데이트
             if status_updates:
-                range_found = f"{gspread.utils.rowcol_to_a1(2, found_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, found_col_idx)}"
-                rq_ws.update(values=[[s] for s in status_updates], range_name=range_found)
-                
-                range_name = f"{gspread.utils.rowcol_to_a1(2, name_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, name_col_idx)}"
-                rq_ws.update(values=[[n] for n in name_updates], range_name=range_name)
-                
-                print(f"Batch updated rq_ws: {len(status_updates)} items.")
+                # [v2.7.0] 요청 시트 피드백 로그 (검증용)
+                self._log_payload("watchlist_feedback", {
+                    "status_updates": status_updates,
+                    "name_updates": name_updates
+                })
+
+                if not self.debug_mode:
+                    range_found = f"{gspread.utils.rowcol_to_a1(2, found_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, found_col_idx)}"
+                    rq_ws.update(values=[[s] for s in status_updates], range_name=range_found)
+                    
+                    range_name = f"{gspread.utils.rowcol_to_a1(2, name_col_idx)}:{gspread.utils.rowcol_to_a1(len(requests)+1, name_col_idx)}"
+                    rq_ws.update(values=[[n] for n in name_updates], range_name=range_name)
+                    print(f"Batch updated rq_ws: {len(status_updates)} items.")
+                else:
+                    print(f"Batch updated rq_ws (Dry-Run): {len(status_updates)} items would be updated.")
 
             # 4-2. 관리 시트에 새 종목 일괄 추가
             if rows_to_add:
-                mgmt_ws.append_rows(rows_to_add)
-                for r in rows_to_add: print(f"Added to management: {r[1]}")
+                if not self.debug_mode:
+                    mgmt_ws.append_rows(rows_to_add)
+                    for r in rows_to_add: print(f"Added to management: {r[1]}")
+                else:
+                    for r in rows_to_add: print(f"Added to management (Dry-Run): {r[1]}")
 
             # 4-3. 관리 시트에서 비활성 종목 일괄 삭제
             if keys_to_remove:
@@ -616,8 +696,11 @@ class StockDataUpdater:
                         rows_to_del.append(i)
                 
                 for r_idx in sorted(rows_to_del, reverse=True):
-                    mgmt_ws.delete_rows(r_idx)
-                    print(f"Removed row {r_idx} from management.")
+                    if not self.debug_mode:
+                        mgmt_ws.delete_rows(r_idx)
+                        print(f"Removed row {r_idx} from management.")
+                    else:
+                        print(f"Removed row {r_idx} from management (Dry-Run).")
 
             return mgmt_ws.get_all_records()
 
@@ -631,9 +714,10 @@ class StockDataUpdater:
                 return []
 
     def get_monthly_worksheet(self):
-        """월별 탭 관리 및 반환 (target_date 기준)"""
+        """월별 탭 관리 및 반환 (target_date 기준): 7개 컬럼 구조 [v2.7.0]"""
         tab_name = self.target_date.strftime('%Y-%m')
-        headers = ['날짜', '시장 요약', '관심종목 현황', '주의종목', '갱신날짜']
+        # [v2.7.0] 7-Column Schema
+        headers = ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
         
         try:
             ws = self.sh.worksheet(tab_name)
@@ -647,13 +731,13 @@ class StockDataUpdater:
             return ws
         except gspread.exceptions.WorksheetNotFound:
             # 새 시트 생성 시에만 최신 구조 적용
-            ws = self.sh.add_worksheet(title=tab_name, rows=1000, cols=15)
+            ws = self.sh.add_worksheet(title=tab_name, rows=1000, cols=10)
             ws.update(values=[headers], range_name='A1')
             
             # 모든 컬럼 상단 정렬 적용
             try:
                 fmt_top = CellFormat(verticalAlignment='TOP')
-                format_cell_range(ws, 'A:E', fmt_top)  # 모든 컬럼 상단 정렬
+                format_cell_range(ws, 'A:G', fmt_top)  # A:G (7 cols)
                 print(f"✅ 새 월별 시트 생성 및 서식 적용: {tab_name}")
             except Exception as e:
                 print(f"✅ 새 월별 시트 생성: {tab_name} (서식 적용 실패: {e})")
@@ -665,6 +749,8 @@ class StockDataUpdater:
         
         print("1. 동기화 중: 관심종목_요청 내역 반영...")
         watchlist_raw = self.get_watchlist()
+        # [v2.7.0] 관리 시트 데이터 로그 (검증용)
+        self._log_payload("watchlist_management", watchlist_raw)
         
         print("2. 수집 중: 시장 지표 및 실제 거래일 확인...")
         indices = self.get_market_indices()
@@ -755,11 +841,8 @@ class StockDataUpdater:
         # '오늘' 시트 및 리포트용 데이터 통합
         market_all = major_data + watch_data 
 
-        print("3.5. 갱신 중: '오늘' 시트...")
-        # v2.6.9: is_active 플래그를 사용하여 노출 결정
-        self.update_global_data(market_all, indices, is_kr_active, is_us_active, mode=mode)
-
-        print("4. 기록 중: '관심종목_관리' 종목 정보 업데이트...")
+        # 3.5. 기록 중: '관심종목_관리' 종목 정보 업데이트 (우선순위 상향)
+        print("3.5. 기록 중: '관심종목_관리' 종목 정보 업데이트...")
         # 수집된 최신 정보(가격, 추천 등)를 관리 시트에 반영
         try:
             mgmt_ws = self.sh.worksheet('관심종목_관리')
@@ -783,7 +866,8 @@ class StockDataUpdater:
         except Exception as e:
             print(f"Warning: 관심종목_관리 업데이트 중 실패: {e}")
 
-        print("4. 수집 중: 주의종목 (네이버 증권 + FDR 전수 조사 + 자체 분석)...")
+        # [v2.7.0] 4. 수집 중: 주의종목 (순서 변경: 오늘 탭 갱신 전 수집)
+        print("3.6. 수집 중: 주의종목 (네이버 증권 + FDR 전수 조사 + 자체 분석)...")
         
         # 4-1. 네이버 증권 스크래핑 (실시간/핫 종목)
         naver_unusual = []
@@ -825,16 +909,25 @@ class StockDataUpdater:
         
         print(f">>> 자체 분석: {len(internal_unusual)}개 종목 추출 완료")
         
-        # 4-3. 데이터 병합 및 중복 제거 (네이버/FDR 우선)
-        all_unusual = naver_unusual + internal_unusual
+        # 4-3. 데이터 병합 및 중복 제거
+        all_unusual_raw = naver_unusual + internal_unusual
         seen = set()
-        unusual = []
-        for d in all_unusual:
+        current_unusual_items = []
+        for d in all_unusual_raw:
             if d['Ticker'] not in seen:
-                unusual.append(d)
+                current_unusual_items.append(d)
                 seen.add(d['Ticker'])
         
-        print(f">>> 최종 주의종목: {len(unusual)}개 (외부수집 {len(naver_unusual)}개 + 자체 {len(unusual) - len(naver_unusual)}개)")
+        # [v2.7.0] 버퍼링 로직 적용: 일간 누적 데이터 가져오기
+        unusual = self.manage_cautionary_buffer(current_unusual_items)
+        
+        print(f">>> 최종 주의종목 (누적): {len(unusual)}개 (금번 발견 {len(current_unusual_items)}개)")
+
+        print("3.7. 갱신 중: '오늘' 시트 (Dashboard Mode)...")
+        # v2.6.9: is_active 플래그를 사용하여 노출 결정
+        # unusual 리스트를 market_all과는 별개로 전달하여 '오늘'탭의 4번째 섹션에 표시
+        self.update_today_data(market_all, indices, is_kr_active, is_us_active, mode=mode, cautionary_list=unusual)
+
 
 
         # 요약 생성 - Market Summary (지수 동적 생성)
@@ -913,7 +1006,61 @@ class StockDataUpdater:
 
         detailed_market_info = "\n".join(report_lines) if report_lines else "N/A"
 
-        print("5. 기록 중: 월별 일지 (중복 체크 포함)...")
+        # 5. 연동 중: 구글 캘린더 (우선순위 상향)
+        print("5. 연동 중: 구글 캘린더...")
+        # 캘린더 이벤트 제목 및 내용 생성
+        
+        # 시간대별 세션 태그
+        now_kst = datetime.datetime.now()
+        session_tag = ""
+        if mode == "MORNING" or (7 <= now_kst.hour <= 9): session_tag = " [모닝]"
+        elif mode == "MIDDAY" or (11 <= now_kst.hour <= 13): session_tag = " [미드데이]"
+        elif mode == "CLOSE" or (15 <= now_kst.hour <= 17): session_tag = " [장마감]"
+        elif mode == "EVENING" or (19 <= now_kst.hour <= 21): session_tag = " [이브닝]"
+
+        # 시장 개장 상태에 따라 제목 결정
+        if is_kr_open and is_us_open:
+            cal_title = f"투자일지{session_tag} 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+        elif is_kr_open:
+            cal_title = f"투자일지{session_tag}(국장) 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
+        elif is_us_open:
+            cal_title = f"투자일지{session_tag}(미장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
+        else:
+            cal_title = f"투자일지{session_tag} 📅 시장 휴장"
+        
+        # 캘린더 본문 생성
+        cal_desc_parts = []
+        if not is_kr_open and not is_us_open:
+            cal_desc_parts.append("## 🚫 주식 시장 휴장")
+            cal_desc_parts.append("한국 및 미국 주식 시장은 휴장입니다.")
+            cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## ⭐ 관심종목 브리핑")
+        cal_desc_parts.append(watch_summary if watch_summary else "등록된 관심종목이 없습니다.")
+        cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## 📈 핵심 시장 지표")
+        if is_kr_open:
+            cal_desc_parts.append(f"- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%)")
+        if is_us_open:
+            cal_desc_parts.append(f"- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%)")
+        cal_desc_parts.append(f"- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f}")
+        cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## 📊 시장 상세 리포트")
+        if detailed_market_info and detailed_market_info != "N/A":
+            cal_desc_parts.append(detailed_market_info)
+        else:
+            cal_desc_parts.append("상세 데이터가 없습니다.")
+        cal_desc_parts.append("")
+        
+        cal_desc_parts.append("## 🔗 상세 내용 보기")
+        cal_desc_parts.append(f"[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})")
+        
+        cal_desc = "\n".join(cal_desc_parts)
+        self.create_calendar_event(cal_title, cal_desc)
+
+        print("6. 기록 중: 월별 일지 (중복 체크 포함)...")
         ws_monthly = self.get_monthly_worksheet()
         if self.debug_mode:
             all_dates = []
@@ -980,59 +1127,6 @@ class StockDataUpdater:
                 ws_monthly.append_row(row_data)
             print(f"Appended new row for {target_iso}.")
 
-        # 6. 연동 중: 구글 캘린더...
-        print("6. 연동 중: 구글 캘린더...")
-        # 캘린더 이벤트 제목 및 내용 생성
-        
-        # 시간대별 세션 태그
-        now_kst = datetime.datetime.now()
-        session_tag = ""
-        if mode == "MORNING" or (7 <= now_kst.hour <= 9): session_tag = " [모닝]"
-        elif mode == "MIDDAY" or (11 <= now_kst.hour <= 13): session_tag = " [미드데이]"
-        elif mode == "CLOSE" or (15 <= now_kst.hour <= 17): session_tag = " [장마감]"
-        elif mode == "EVENING" or (19 <= now_kst.hour <= 21): session_tag = " [이브닝]"
-
-        # 시장 개장 상태에 따라 제목 결정
-        if is_kr_open and is_us_open:
-            cal_title = f"투자일지{session_tag} 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
-        elif is_kr_open:
-            cal_title = f"투자일지{session_tag}(국장) 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
-        elif is_us_open:
-            cal_title = f"투자일지{session_tag}(미장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
-        else:
-            cal_title = f"투자일지{session_tag} 📅 시장 휴장"
-        
-        # 캘린더 본문 생성
-        cal_desc_parts = []
-        if not is_kr_open and not is_us_open:
-            cal_desc_parts.append("## 🚫 주식 시장 휴장")
-            cal_desc_parts.append("한국 및 미국 주식 시장은 휴장입니다.")
-            cal_desc_parts.append("")
-        
-        cal_desc_parts.append("## ⭐ 관심종목 브리핑")
-        cal_desc_parts.append(watch_summary if watch_summary else "등록된 관심종목이 없습니다.")
-        cal_desc_parts.append("")
-        
-        cal_desc_parts.append("## 📈 핵심 시장 지표")
-        if is_kr_open:
-            cal_desc_parts.append(f"- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%)")
-        if is_us_open:
-            cal_desc_parts.append(f"- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%)")
-        cal_desc_parts.append(f"- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f}")
-        cal_desc_parts.append("")
-        
-        cal_desc_parts.append("## 📊 시장 상세 리포트")
-        if detailed_market_info and detailed_market_info != "N/A":
-            cal_desc_parts.append(detailed_market_info)
-        else:
-            cal_desc_parts.append("상세 데이터가 없습니다.")
-        cal_desc_parts.append("")
-        
-        cal_desc_parts.append("## 🔗 상세 내용 보기")
-        cal_desc_parts.append(f"[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})")
-        
-        cal_desc = "\n".join(cal_desc_parts)
-        self.create_calendar_event(cal_title, cal_desc)
         print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
 
     def _merge_report_sections(self, old_text, new_text, markers):
