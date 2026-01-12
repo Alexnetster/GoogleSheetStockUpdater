@@ -352,13 +352,26 @@ class StockDataUpdater:
 
         # 3. 종목 데이터 (필터링 적용)
         # 카테고리별 출력 (Major -> Crypto -> Watchlist)
-        major_data = [d for d in data if str(d.get('Category', '')).lower() == 'major']
-        crypto_data = [d for d in data if str(d.get('Category', '')).lower() == 'crypto' and d not in major_data]
+        # 3. 종목 데이터 (필터링 적용)
+        # 카테고리별 출력 (Major -> Crypto -> Watchlist)
+        major_data = [d for d in data if str(d.get('Category', '')).lower() in ['major', '주요']]
+        crypto_data = [d for d in data if str(d.get('Category', '')).lower() in ['crypto', 'coin', '코인'] and d not in major_data]
         watch_data = [d for d in data if d not in major_data and d not in crypto_data]
 
+        # [v2.7.0] 국가별 섹션 분리
+        major_kr = [d for d in major_data if d.get('Asset') == 'KR']
+        major_us = [d for d in major_data if d.get('Asset') == 'US']
+        major_etc = [d for d in major_data if d.get('Asset') not in ['KR', 'US']] # 혹시 모를 기타
+
+        watch_kr = [d for d in watch_data if d.get('Asset') == 'KR']
+        watch_us = [d for d in watch_data if d.get('Asset') == 'US']
+        watch_etc = [d for d in watch_data if d.get('Asset') not in ['KR', 'US']]
+
         sections = [
-            ('⭐ [관심종목]', watch_data),
-            ('📌 [주요종목]', major_data),
+            ('📌 [주요종목: 한국]', major_kr),
+            ('📌 [주요종목: 미국]', major_us + major_etc), # 기타는 미국 쪽에 병합 표시
+            ('⭐ [관심종목: 한국]', watch_kr),
+            ('⭐ [관심종목: 미국]', watch_us + watch_etc),
             ('🪙 [코인]', crypto_data),
             ('🚨 [주의종목]', cautionary_list)
         ]
@@ -870,7 +883,7 @@ class StockDataUpdater:
             category = str(item.get('카테고리', item.get('Category', ''))).strip().lower()
             if category in ['index', '지수']: continue # 지수는 이미 수집됨
             
-            asset_type = item.get('Asset', 'US')
+            asset_type = item.get('Asset', item.get('구분', 'US'))
             
             # 시장 개장 상태와 상관없이 '오늘' 탭을 위해 데이터를 수집합니다 (휴장일은 마지막 거래일 종가 표시)
             if asset_type == 'KR' and not is_kr_open:
@@ -1086,8 +1099,8 @@ class StockDataUpdater:
         final_idx_text = "\n".join(idx_report)
 
         # 5-2. 섹션별 종목 텍스트 (Local filtering)
-        major_data = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
-        crypto_data = [d for d in market_all if str(d.get('Category', '')).lower() == 'crypto' and d not in major_data]
+        major_data = [d for d in market_all if str(d.get('Category', '')).lower() in ['major', '주요']]
+        crypto_data = [d for d in market_all if str(d.get('Category', '')).lower() in ['crypto', 'coin', '코인'] and d not in major_data]
         watch_data = [d for d in market_all if d not in major_data and d not in crypto_data]
 
         def format_item_list(items):
