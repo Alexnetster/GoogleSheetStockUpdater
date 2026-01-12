@@ -522,18 +522,24 @@ class StockDataUpdater:
         if rows_to_add and not self.debug_mode:
             ws.append_rows(rows_to_add)
             
-            # 서식 적용 (우측 정렬: E~G)
+            # 서식 적용 (상단 정렬 & 우측 정렬)
             try:
-                fmt_center_bold = CellFormat(horizontalAlignment='CENTER', textFormat=TextFormat(bold=True))
-                fmt_right = CellFormat(horizontalAlignment='RIGHT')
+                # 포맷 정의 (모두 상단 정렬 적용)
+                fmt_header = CellFormat(horizontalAlignment='CENTER', verticalAlignment='TOP', textFormat=TextFormat(bold=True))
+                fmt_normal = CellFormat(horizontalAlignment='LEFT', verticalAlignment='TOP')
+                fmt_number = CellFormat(horizontalAlignment='RIGHT', verticalAlignment='TOP')
                 
-                # 헤더 강조
-                format_cell_range(ws, 'A1:H1', fmt_center_bold)
-                
-                # 데이터 영역 우측 정렬 (현재가, 변동률, 거래량)
-                last_row = len(final_list) + 1 # 헤더 포함 추정
+                last_row = len(final_list) + 1
+                range_end = last_row + 10 # 여유분
+
                 if last_row > 1:
-                     format_cell_range(ws, f'E2:G{last_row+10}', fmt_right) # 여유있게 범위 지정
+                    # 1. 전체 데이터 영역: Top + Left (기본)
+                    format_cell_range(ws, f'A2:H{range_end}', fmt_normal)
+                    # 2. 숫자 데이터 영역: Top + Right (덮어쓰기)
+                    format_cell_range(ws, f'E2:G{range_end}', fmt_number)
+                
+                # 3. 헤더: Top + Center + Bold
+                format_cell_range(ws, 'A1:H1', fmt_header)
             except: pass
             
             print(f" [Buffer] Added {len(rows_to_add)} new items to '{sheet_name}'.")
