@@ -15,9 +15,18 @@ class StockDataVerifier(StockDataUpdater):
         super().__init__(target_date=target_date)
         self.debug_mode = dry_run # True이면 실제 API 호출(update 등)을 스킵함
         self.real_watchlist = real_watchlist
-        self.log_dir = os.path.join("debug_logs", self.target_date.isoformat())
-        os.makedirs(self.log_dir, exist_ok=True)
-        print(f"DEBUG: Verification mode active. Logs will be saved to: {self.log_dir}")
+        # 2. 로그 디렉토리 생성 (및 초기화)
+        self.log_dir = os.path.join("debug_logs", self.target_date.strftime("%Y-%m-%d"))
+        if os.path.exists(self.log_dir):
+            print(f"   [INFO] Cleaning up old logs in: {self.log_dir}")
+            for f in os.listdir(self.log_dir):
+                fp = os.path.join(self.log_dir, f)
+                if os.path.isfile(fp):
+                    os.unlink(fp)
+        else:
+            os.makedirs(self.log_dir, exist_ok=True)
+            
+        print(f"   [DEBUG] Verification mode active. Logs will be saved to: {self.log_dir}")
         if self.debug_mode:
             print("DEBUG: Dry-run active. Google Sheets/Calendar will NOT be modified.")
             # 가상 시트 데이터 설정 (API 호출 방지)
@@ -80,10 +89,19 @@ class StockDataVerifier(StockDataUpdater):
         def mocked_get_stock_data(tickers, asset_type):
             res = []
             for t in tickers:
+                # Find category from self.watchlist (created in get_watchlist)
+                category = "Watchlist" # Default
+                if hasattr(self, 'watchlist'):
+                    for item in self.watchlist:
+                        if str(item.get('Ticker')) == str(t):
+                             category = item.get('Category', 'Watchlist')
+                             break
+                
                 res.append({
                     'Asset': asset_type, 'Ticker': t, 'Name': f"Mock_{t}", 
                     'Price': 100.0, 'FormattedPrice': '100.0', 'ChangeRate': 1.5, 
-                    'Volume': 1000000, 'MarketCap': 1000000000, 'Recommendation': 'HOLD'
+                    'Volume': 1000000, 'MarketCap': 1000000000, 'Recommendation': 'HOLD',
+                    'Category': category
                 })
             return res
         self.get_stock_data = mocked_get_stock_data

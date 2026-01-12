@@ -26,7 +26,7 @@ SHEET_SCHEMA = {
         'description': '시스템 동기화 및 데이터 관리 레이어 (DB)'
     },
     '주의종목_버퍼': {
-        'headers': ['Date', 'Asset', 'Ticker', 'Name', 'Price', 'Change', 'Volume', 'Source'],
+        'headers': ['날짜', '자산', '티커', '종목명', '현재가', '변동률', '거래량', '출처'],
         'description': '일간 특이 종목 누적 버퍼 (매일 초기화)'
     }
 }

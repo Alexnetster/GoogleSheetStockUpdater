@@ -396,19 +396,31 @@ class StockDataUpdater:
             ws.update(values=rows, range_name=range_name)
         
         # 서식 지정 (간략화)
+        # 서식 지정 (Explicit Formatting)
         try:
-            fmt_right = CellFormat(horizontalAlignment='RIGHT')
-            fmt_center = CellFormat(horizontalAlignment='CENTER', textFormat=TextFormat(bold=True))
+            # 1. 포맷 정의
+            fmt_left = CellFormat(horizontalAlignment='LEFT', textFormat=TextFormat(bold=False))
+            fmt_right = CellFormat(horizontalAlignment='RIGHT', textFormat=TextFormat(bold=False))
+            fmt_header = CellFormat(horizontalAlignment='CENTER', textFormat=TextFormat(bold=True))
             
-            # 섹션 헤더 강조 (A열의 === 로 시작하는 행들)
-            for i, r in enumerate(rows):
-                if r and str(r[0]).startswith("==="):
-                    format_cell_range(ws, f'A{start_row+i}:G{start_row+i}', fmt_center)
-            
-            # 수치 데이터 우측 정렬
+            # 2. 전체 데이터 영역 기본 정렬 (데이터 행 기준)
+            # A~C열: 좌측 정렬 (자산, 티커, 종목명)
+            format_cell_range(ws, f'A{start_row}:C{start_row+len(rows)}', fmt_left)
+            # D~G열: 우측 정렬 (수치 데이터)
             format_cell_range(ws, f'D{start_row}:G{start_row+len(rows)}', fmt_right)
-            print(f"✅ 오늘 시트 업데이트 완료 ({session_kr})")
-        except: pass
+            
+            # 3. 헤더 행(섹션/컬럼) 강조
+            header_keywords = ["자산", "티커", "종목명", "번호", "국가"]
+            for i, r in enumerate(rows):
+                if not r: continue
+                # 섹션 헤더 (===) 또는 컬럼 헤더 (자산, 번호 등)
+                str_val = str(r[0])
+                if str_val.startswith("===") or str_val in header_keywords:
+                    format_cell_range(ws, f'A{start_row+i}:G{start_row+i}', fmt_header)
+            
+            print(f"✅ 오늘 시트 업데이트 완료 ({session_kr}) - 포맷 적용됨")
+        except Exception as e:
+            print(f"Warning: 서식 적용 실패: {e}")
 
     def _get_news_top1(self, stock_obj, ticker, asset_type):
         try:
@@ -432,7 +444,7 @@ class StockDataUpdater:
         except gspread.exceptions.WorksheetNotFound:
             if not self.debug_mode:
                 ws = self.sh.add_worksheet(title=sheet_name, rows=500, cols=8)
-                ws.append_row(['Date', 'Asset', 'Ticker', 'Name', 'Price', 'Change', 'Volume', 'Source'])
+                ws.append_row(['날짜', '자산', '티커', '종목명', '현재가', '변동률', '거래량', '출처'])
             else:
                 return new_items
 
@@ -446,7 +458,7 @@ class StockDataUpdater:
                 # 시트가 비어있거나, 날짜가 다르면 초기화
                 if not first_val or first_val != target_date_str:
                     ws.clear()
-                    ws.append_row(['Date', 'Asset', 'Ticker', 'Name', 'Price', 'Change', 'Volume', 'Source'])
+                    ws.append_row(['날짜', '자산', '티커', '종목명', '현재가', '변동률', '거래량', '출처'])
                     print(f" [Buffer] New day detected. Cleared '{sheet_name}'.")
             except: pass
 
@@ -456,10 +468,31 @@ class StockDataUpdater:
         if not self.debug_mode:
             raw_data = ws.get_all_records()
             for r in raw_data:
+                # 시트 헤더가 한글이므로 한글 키 사용
+                asset = r.get('자산', r.get('Asset', ''))
+                ticker = str(r.get('티커', r.get('Ticker', '')))
+                
                 # 키: (Asset, Ticker)
-                key = (r.get('Asset'), str(r.get('Ticker')))
+                key = (asset, ticker)
                 existing_tickers.add(key)
-                current_rows.append(r) # 로컬 변환용
+                
+                # 내부 로직용 영문 키로 변환하여 리스트에 추가
+                std_item = {
+                    'Asset': asset,
+                    'Ticker': ticker,
+                    'Name': r.get('종목명', r.get('Name', '')),
+                    'FormattedPrice': r.get('현재가', r.get('Price', '')),
+                    'ChangeRate': r.get('변동률', r.get('Change', 0)),
+                    'Volume': r.get('거래량', r.get('Volume', 0)),
+                    'Source': r.get('출처', r.get('Source', ''))
+                }
+                # 변동률 등 숫자 변환 필요시 추가 처리 (일단 그대로 사용)
+                try:
+                    if isinstance(std_item['ChangeRate'], str) and '%' in std_item['ChangeRate']:
+                        std_item['ChangeRate'] = float(std_item['ChangeRate'].replace('%', ''))
+                except: pass
+                
+                current_rows.append(std_item) # 로컬 변환용
         
         # 3. 새로운 데이터 병합
         rows_to_add = []
@@ -488,8 +521,26 @@ class StockDataUpdater:
         # 4. 시트 업데이트
         if rows_to_add and not self.debug_mode:
             ws.append_rows(rows_to_add)
+            
+            # 서식 적용 (우측 정렬: E~G)
+            try:
+                fmt_center_bold = CellFormat(horizontalAlignment='CENTER', textFormat=TextFormat(bold=True))
+                fmt_right = CellFormat(horizontalAlignment='RIGHT')
+                
+                # 헤더 강조
+                format_cell_range(ws, 'A1:H1', fmt_center_bold)
+                
+                # 데이터 영역 우측 정렬 (현재가, 변동률, 거래량)
+                last_row = len(final_list) + 1 # 헤더 포함 추정
+                if last_row > 1:
+                     format_cell_range(ws, f'E2:G{last_row+10}', fmt_right) # 여유있게 범위 지정
+            except: pass
+            
             print(f" [Buffer] Added {len(rows_to_add)} new items to '{sheet_name}'.")
             
+        # [v2.7.0] 버퍼 데이터 검증용 로그
+        self._log_payload("cautionary_buffer", final_list)
+
         return final_list
 
     def get_watchlist(self):
@@ -1006,11 +1057,59 @@ class StockDataUpdater:
 
         detailed_market_info = "\n".join(report_lines) if report_lines else "N/A"
 
-        # 5. 연동 중: 구글 캘린더 (우선순위 상향)
-        print("5. 연동 중: 구글 캘린더...")
-        # 캘린더 이벤트 제목 및 내용 생성
+        # 5. [v2.7.0] 텍스트 생성 (Calendar & Monthly 공용)
+        print("5. 데이터 포맷팅 및 연동 준비...")
         
-        # 시간대별 세션 태그
+        # 5-1. 지수/환율 텍스트
+        idx_report = []
+        if indices:
+            # KR
+            kr_lines = [f"KR:{k} {v['rate']:+.2f}%" for k, v in indices.items() 
+                        if k in ['KOSPI', 'KOSDAQ'] and v.get('category') in ['index', '지수']]
+            if kr_lines: idx_report.append(", ".join(kr_lines))
+            
+            # US
+            us_lines = [f"US:{k} {v['rate']:+.2f}%" for k, v in indices.items() 
+                        if k in ['S&P500', 'NASDAQ'] and v.get('category') in ['index', '지수']]
+            if us_lines: idx_report.append(", ".join(us_lines))
+            
+            # Exchange
+            ex_lines = [f"{k} {v['price']:,.1f}" for k, v in indices.items() 
+                        if v.get('category') in ['exchange', '환율']]
+            if ex_lines: idx_report.append(", ".join(ex_lines))
+        final_idx_text = "\n".join(idx_report)
+
+        # 5-2. 섹션별 종목 텍스트 (Local filtering)
+        major_data = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
+        crypto_data = [d for d in market_all if str(d.get('Category', '')).lower() == 'crypto' and d not in major_data]
+        watch_data = [d for d in market_all if d not in major_data and d not in crypto_data]
+
+        def format_item_list(items):
+            lines = []
+            for d in items:
+                line = f"[{d.get('Ticker','-')}] {d.get('Name','-')} ({d.get('ChangeRate',0):+.2f}%)"
+                if d.get('FinalRecommendation', '-') not in ['-', '']:
+                    line += f" [{d.get('FinalRecommendation')}]"
+                lines.append(line)
+            return "\n".join(lines)
+
+        text_watchlist = format_item_list(watch_data)
+        text_major = format_item_list(major_data)
+        text_crypto = format_item_list(crypto_data)
+
+        # 5-3. 주의종목 텍스트
+        caution_lines = []
+        if unusual:
+            for d in unusual:
+                tag = f"[{d.get('Source', '주의')}]" if d.get('Source') != 'Internal' else "[급변]"
+                line = f"{tag} {d.get('Name','-')} ({d.get('ChangeRate',0):+.2f}%)"
+                caution_lines.append(line)
+        text_cautionary = "\n".join(caution_lines)
+
+        # 6. 연동: 구글 캘린더
+        print("6. 연동 중: 구글 캘린더...")
+        
+        # 제목 생성
         now_kst = datetime.datetime.now()
         session_tag = ""
         if mode == "MORNING" or (7 <= now_kst.hour <= 9): session_tag = " [모닝]"
@@ -1018,7 +1117,6 @@ class StockDataUpdater:
         elif mode == "CLOSE" or (15 <= now_kst.hour <= 17): session_tag = " [장마감]"
         elif mode == "EVENING" or (19 <= now_kst.hour <= 21): session_tag = " [이브닝]"
 
-        # 시장 개장 상태에 따라 제목 결정
         if is_kr_open and is_us_open:
             cal_title = f"투자일지{session_tag} 📈 KOSPI {indices.get('KOSPI',{}).get('rate',0):+.2f}%"
         elif is_kr_open:
@@ -1027,105 +1125,77 @@ class StockDataUpdater:
             cal_title = f"투자일지{session_tag}(미장) 📈 S&P500 {indices.get('S&P500',{}).get('rate',0):+.2f}%"
         else:
             cal_title = f"투자일지{session_tag} 📅 시장 휴장"
-        
-        # 캘린더 본문 생성
+
+        # 본문 생성 (New Structure)
         cal_desc_parts = []
-        if not is_kr_open and not is_us_open:
-            cal_desc_parts.append("## 🚫 주식 시장 휴장")
-            cal_desc_parts.append("한국 및 미국 주식 시장은 휴장입니다.")
+        cal_desc_parts.append("## 📊 시장 지표")
+        cal_desc_parts.append(final_idx_text if final_idx_text else "-")
+        cal_desc_parts.append("")
+        
+        if text_watchlist:
+            cal_desc_parts.append("## ⭐ 관심종목")
+            cal_desc_parts.append(text_watchlist)
             cal_desc_parts.append("")
-        
-        cal_desc_parts.append("## ⭐ 관심종목 브리핑")
-        cal_desc_parts.append(watch_summary if watch_summary else "등록된 관심종목이 없습니다.")
-        cal_desc_parts.append("")
-        
-        cal_desc_parts.append("## 📈 핵심 시장 지표")
-        if is_kr_open:
-            cal_desc_parts.append(f"- 국장: KOSPI {indices.get('KOSPI',{}).get('price',0):,.1f} ({indices.get('KOSPI',{}).get('rate',0):+.2f}%)")
-        if is_us_open:
-            cal_desc_parts.append(f"- 미장: S&P500 {indices.get('S&P500',{}).get('price',0):,.1f} ({indices.get('S&P500',{}).get('rate',0):+.2f}%)")
-        cal_desc_parts.append(f"- 환율: USD/KRW {indices.get('USD/KRW',{}).get('price',0):,.1f}")
-        cal_desc_parts.append("")
-        
-        cal_desc_parts.append("## 📊 시장 상세 리포트")
-        if detailed_market_info and detailed_market_info != "N/A":
-            cal_desc_parts.append(detailed_market_info)
-        else:
-            cal_desc_parts.append("상세 데이터가 없습니다.")
-        cal_desc_parts.append("")
-        
+            
+        if text_major:
+            cal_desc_parts.append("## 📌 주요종목")
+            cal_desc_parts.append(text_major)
+            cal_desc_parts.append("")
+            
+        if text_crypto:
+            cal_desc_parts.append("## 🪙 코인")
+            cal_desc_parts.append(text_crypto)
+            cal_desc_parts.append("")
+            
+        if text_cautionary:
+            cal_desc_parts.append("## 🚨 주의종목 (전체)")
+            cal_desc_parts.append(text_cautionary)
+            cal_desc_parts.append("")
+
         cal_desc_parts.append("## 🔗 상세 내용 보기")
         cal_desc_parts.append(f"[구글 시트 바로가기](https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID})")
         
-        cal_desc = "\n".join(cal_desc_parts)
-        self.create_calendar_event(cal_title, cal_desc)
+        self.create_calendar_event(cal_title, "\n".join(cal_desc_parts))
 
-        print("6. 기록 중: 월별 일지 (중복 체크 포함)...")
-        ws_monthly = self.get_monthly_worksheet()
-        if self.debug_mode:
-            all_dates = []
-            print("   [DEBUG] Dry-run: Skipping Monthly data existence check.")
-        else:
-            all_dates = ws_monthly.col_values(1)
-        target_iso = self.target_date.isoformat()
-
-        row_data = [
-            target_iso,
-            market_summary,
-            watch_summary if watch_summary else "N/A",
-            detailed_market_info,
-            datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        ]
-
-
-        if target_iso in all_dates:
-            row_idx = all_dates.index(target_iso) + 1
-            existing_row = ws_monthly.row_values(row_idx)
+        # 7. 기록 중: 월별 일지 (7-Column Schema)
+        print("7. 기록 중: 월별 일지...")
+        try:
+            m_ws = self.get_monthly_worksheet()
+            target_date_str = self.target_date.strftime('%Y-%m-%d')
             
-            # [v2.6.9] 과거 날짜라도 완전 덮어쓰기 대신 병합을 수행하여 데이터 손실 방지
-            # 단, manual_date 인 경우 병합 시 '신규 정보'가 구 정보보다 우선함
+            # 행 찾기
+            cell = None
+            try:
+                cell = m_ws.find(target_date_str, in_column=1)
+            except: pass
             
-            # Market Summary 병합
-            new_market = row_data[1]
-            old_market = existing_row[1] if len(existing_row) > 1 else ""
-            merged_market = self._merge_report_sections(old_market, new_market, ["KR 지수:", "US 지수:", "환율:"])
-            
-            # Watchlist Status 병합
-            new_watch = row_data[2]
-            old_watch = existing_row[2] if len(existing_row) > 2 else ""
-            merged_watch = self._merge_report_sections(old_watch, new_watch, ["KR:", "US:", "Coin:"])
-            
-            # Detailed Info 병합 (유연한 마커 지원)
-            new_detailed = row_data[3]
-            old_detailed = existing_row[3] if len(existing_row) > 3 else ""
-            markers = [
-                "[주요종목:한국]", "[주요종목:미국]", "[주요종목:코인]",
-                "[관심종목:한국]", "[관심종목:미국]",
-                "[특이종목:네이버/FDR수집:한국]", "[특이종목:네이버/FDR수집:미국]",
-                "[주요종목]", "[관심종목]", "[주의종목]", "[특이종목]" # 구버전 호환 마커 포함
+            now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            row_data = [
+                target_date_str,   # A: 날짜
+                final_idx_text,    # B: 지수/환율
+                text_watchlist,    # C: 관심종목
+                text_major,        # D: 주요종목
+                text_crypto,       # E: 코인
+                text_cautionary,   # F: 주의종목 (누적)
+                now_str            # G: 갱신날짜
             ]
-            merged_detailed = self._merge_report_sections(old_detailed, new_detailed, markers)
-
-            row_data[1] = merged_market
-            row_data[2] = merged_watch
-            row_data[3] = merged_detailed
             
-            if manual_date:
-                print(f">>> [Historical Sync] Merging data for {target_iso} (Overwrite check done).")
-
             # [v2.6.9] 월별 데이터 로그
             self._log_payload("monthly", row_data)
-            
-            if not self.debug_mode:
-                ws_monthly.update(values=[row_data], range_name=f'A{row_idx}:E{row_idx}')
-            print(f"Updated and Merged row for {target_iso}.")
-        else:
-            # [v2.6.9] 월별 데이터 로그
-            self._log_payload("monthly", row_data)
-            
-            if not self.debug_mode:
-                ws_monthly.append_row(row_data)
-            print(f"Appended new row for {target_iso}.")
+
+            if cell:
+                # Update existing row
+                if not self.debug_mode:
+                    m_ws.update(values=[row_data], range_name=f'A{cell.row}')
+                    print(f"Updated monthly log for {target_date_str} (Row {cell.row})")
+            else:
+                # Append new row
+                if not self.debug_mode:
+                    m_ws.append_row(row_data)
+                    print(f"Appended new monthly log for {target_date_str}")
+                    
+        except Exception as e:
+            print(f"Error updating monthly log: {e}")
 
         print(f"모든 작업이 {self.target_date} 기준으로 완료되었습니다.")
 
