@@ -497,8 +497,9 @@ class StockDataUpdater:
             raw_data = ws.get_all_records()
             for r in raw_data:
                 # 시트 헤더가 한글이므로 한글 키 사용
-                asset = r.get('자산', r.get('Asset', ''))
-                ticker = str(r.get('티커', r.get('Ticker', '')))
+                asset = r.get('자산', r.get('Asset', '')).strip()
+                raw_ticker = str(r.get('티커', r.get('Ticker', '')))
+                ticker = self._normalize_ticker(raw_ticker, asset)
                 
                 # 키: (Asset, Ticker)
                 key = (asset, ticker)
@@ -527,7 +528,11 @@ class StockDataUpdater:
         final_list = list(current_rows) # 기존 데이터로 시작
         
         for item in new_items:
-            key = (item.get('Asset'), str(item.get('Ticker')))
+            asset = item.get('Asset', '').strip()
+            raw_ticker = str(item.get('Ticker', ''))
+            ticker = self._normalize_ticker(raw_ticker, asset)
+            
+            key = (asset, ticker)
             if key not in existing_tickers:
                 # 시트 추가용 행
                 row = [
