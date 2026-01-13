@@ -19,7 +19,7 @@ SHEET_SCHEMA = {
     },
 
     '종목_요청': {
-        'headers': ['티커', '종목명', '카테고리', '메모', '사용여부', '검색결과'],
+        'headers': ['카테고리', '티커', '종목명', '메모', '사용여부', '검색결과'],
         'description': '사용자 입력 레이어 (종목 추가/삭제/분류)'
     },
     '종목_관리': {
@@ -34,27 +34,27 @@ SHEET_SCHEMA = {
 
 # --- 시스템 초기 기본 데이터 (Seed Data) ---
 DEFAULT_BOOTSTRAP_DATA = [
-    # [티커, 종목명, 카테고리, 메모, 사용여부, 검색결과]
+    # [카테고리, 티커, 종목명, 메모, 사용여부, 검색결과]
     # Indices
-    ['^KS11', 'KOSPI', '지수', '국내 코스피 지수', 'TRUE', 'TRUE'],
-    ['^KQ11', 'KOSDAQ', '지수', '국내 코스닥 지수', 'TRUE', 'TRUE'],
-    ['^GSPC', 'S&P500', '지수', '미국 S&P500 지수', 'TRUE', 'TRUE'],
-    ['^IXIC', 'NASDAQ', '지수', '미국 나스닥 지수', 'TRUE', 'TRUE'],
-    ['USDKRW=X', 'USD/KRW', '환율', '원/달러 환율', 'TRUE', 'TRUE'],
+    ['지수', '^KS11', 'KOSPI', '국내 코스피 지수', 'TRUE', 'TRUE'],
+    ['지수', '^KQ11', 'KOSDAQ', '국내 코스닥 지수', 'TRUE', 'TRUE'],
+    ['지수', '^GSPC', 'S&P500', '미국 S&P500 지수', 'TRUE', 'TRUE'],
+    ['지수', '^IXIC', 'NASDAQ', '미국 나스닥 지수', 'TRUE', 'TRUE'],
+    ['환율', 'USDKRW=X', 'USD/KRW', '원/달러 환율', 'TRUE', 'TRUE'],
     # Major Stocks
-    ['005930', '삼성전자', '주요종목', '국내 시총 1위', 'TRUE', 'TRUE'],
-    ['000660', 'SK하이닉스', '주요종목', '국내 반도체 주요', 'TRUE', 'TRUE'],
-    ['AAPL', 'Apple', '주요종목', '미국 시총 상위', 'TRUE', 'TRUE'],
-    ['NVDA', 'Nvidia', '주요종목', 'AI 반도체 리더', 'TRUE', 'TRUE'],
-    ['TSLA', 'Tesla', '주요종목', '전기차/자율주행', 'TRUE', 'TRUE'],
+    ['주요종목', '005930', '삼성전자', '국내 시총 1위', 'TRUE', 'TRUE'],
+    ['주요종목', '000660', 'SK하이닉스', '국내 반도체 주요', 'TRUE', 'TRUE'],
+    ['주요종목', 'AAPL', 'Apple', '미국 시총 상위', 'TRUE', 'TRUE'],
+    ['주요종목', 'NVDA', 'Nvidia', 'AI 반도체 리더', 'TRUE', 'TRUE'],
+    ['주요종목', 'TSLA', 'Tesla', '전기차/자율주행', 'TRUE', 'TRUE'],
     # Crypto (24/7 Assets)
-    ['BTC-USD', 'Bitcoin', '가상화폐', '크립토 대장주', 'TRUE', 'TRUE'],
-    ['ETH-USD', 'Ethereum', '가상화폐', '알트코인 대장', 'TRUE', 'TRUE'],
-    ['XRP-USD', 'Ripple', '가상화폐', '송금 최적화 코인', 'TRUE', 'TRUE'],
-    ['SOL-USD', 'Solana', '가상화폐', '고성능 메인넷', 'TRUE', 'TRUE'],
+    ['가상화폐', 'BTC-USD', 'Bitcoin', '크립토 대장주', 'TRUE', 'TRUE'],
+    ['가상화폐', 'ETH-USD', 'Ethereum', '알트코인 대장', 'TRUE', 'TRUE'],
+    ['가상화폐', 'XRP-USD', 'Ripple', '송금 최적화 코인', 'TRUE', 'TRUE'],
+    ['가상화폐', 'SOL-USD', 'Solana', '고성능 메인넷', 'TRUE', 'TRUE'],
     # Watchlist Example
-    ['035420', 'NAVER', '관심종목', '국내 플랫폼 기업', 'TRUE', 'TRUE'],
-    ['GOOGL', 'Alphabet A', '관심종목', '구글 검색', 'TRUE', 'TRUE'],
+    ['관심종목', '035420', 'NAVER', '국내 플랫폼 기업', 'TRUE', 'TRUE'],
+    ['관심종목', 'GOOGL', 'Alphabet A', '구글 검색', 'TRUE', 'TRUE'],
 ]
 
 def initialize(reset_mode=False):

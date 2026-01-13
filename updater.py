@@ -649,7 +649,7 @@ class StockDataUpdater:
             except gspread.exceptions.WorksheetNotFound:
                 if not self.debug_mode:
                     rq_ws = self.sh.add_worksheet(title=req_sheet_name, rows=100, cols=6)
-                    rq_ws.append_row(['티커', '종목명', '카테고리', '메모', '사용여부', '검색결과'])
+                    rq_ws.append_row(['카테고리', '티커', '종목명', '메모', '사용여부', '검색결과'])
                     print(f"Created '{req_sheet_name}' sheet.")
                 else:
                     return [] 
@@ -1056,6 +1056,24 @@ class StockDataUpdater:
                         if '종목명' in headers: mgmt_ws.update_cell(row_idx, headers.index('종목명') + 1, info.get('Name', ''))
                     except Exception as e:
                         print(f"Error updating mgmt row for {ticker}: {e}")
+            
+            # [v2.7.3] Apply Right Alignment for Price/Change/Volume in Mgmt Sheet
+            try:
+                headers = mgmt_ws.row_values(1)
+                # Formats
+                fmt_right = CellFormat(horizontalAlignment='RIGHT')
+                
+                # Check columns to format
+                cols_to_fmt = ['현재가', '변동률', '거래량']
+                for c in cols_to_fmt:
+                    if c in headers:
+                        col_idx = headers.index(c) + 1
+                        col_letter = gspread.utils.rowcol_to_a1(1, col_idx)[0] # e.g. 'E'
+                        # Format entire column E:E (from row 2)
+                        format_cell_range(mgmt_ws, f'{col_letter}2:{col_letter}', fmt_right)
+            except Exception as e:
+                print(f"Warning: Failed to format numeric columns in mgmt sheet: {e}")
+
         except Exception as e:
             print(f"Warning: 종목_관리 업데이트 중 실패: {e}")
 
