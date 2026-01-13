@@ -111,13 +111,29 @@ class StockDataUpdater:
         """시장 지수 및 환율 수집 (시트 설정 기반 또는 기본값)"""
         # 1. 시트에서 Category='Index'인 항목 가져오기 시도
         index_map = {}
+        ws_name = '종목_관리'
+        # [v2.7.0] Migration: Check for old sheet name and rename if necessary
         try:
-            ws = self.sh.worksheet('관심종목_관리')
+            self.sh.worksheet(ws_name)
+        except gspread.exceptions.WorksheetNotFound:
+            try:
+                old_ws = self.sh.worksheet('관심종목_관리')
+                old_ws.update_title(ws_name)
+                print(f"Migrated sheet '{old_ws.title}' to '{ws_name}'")
+            except gspread.exceptions.WorksheetNotFound:
+                pass # Will be handled/created later if needed
+
+        try:
+            ws = self.sh.worksheet(ws_name)
             all_records = ws.get_all_records()
             for r in all_records:
                 # Use robust key matching for localization
-                category = str(r.get('카테고리', r.get('Category', ''))).strip().lower()
-                if category in ['index', '지수', 'exchange', '환율']:
+                category = str(r.get('카테고리', r.get('Category', ''))).strip()
+                # Normalize to Korean for consistent checking
+                if category in ['index', 'Index', '지수']: category = '지수'
+                if category in ['exchange', 'Exchange', '환율']: category = '환율'
+
+                if category in ['지수', '환율']:
                     ticker = str(r.get('티커', r.get('Ticker', ''))).strip()
                     name = str(r.get('종목명', r.get('Name', ''))).strip()
                     if ticker and name:
@@ -126,7 +142,7 @@ class StockDataUpdater:
             pass
 
         if not index_map:
-            print("⚠️  [필독] 시트에서 'Index' 또는 '지수' 카테고리를 찾을 수 없습니다.")
+            print(f"⚠️  [필독] 시트('{ws_name}')에서 '지수' 또는 '환율' 카테고리를 찾을 수 없습니다.")
             print("   -> 'tools/initialize_sheet.py'를 실행하거나 GitHub 'Maintenance' 워크플로우를 통해 시트를 복구하세요.")
         else:
             print(f">>> Found {len(index_map)} indices in sheet.")
@@ -351,11 +367,10 @@ class StockDataUpdater:
             rows.append([])
 
         # 3. 종목 데이터 (필터링 적용)
-        # 카테고리별 출력 (Major -> Crypto -> Watchlist)
-        # 3. 종목 데이터 (필터링 적용)
-        # 카테고리별 출력 (Major -> Crypto -> Watchlist)
-        major_data = [d for d in data if str(d.get('Category', '')).lower() in ['major', '주요']]
-        crypto_data = [d for d in data if str(d.get('Category', '')).lower() in ['crypto', 'coin', '코인'] and d not in major_data]
+        # 카테고리별 출력 (주요종목 -> 가상화폐 -> 관심종목)
+        # [v2.7.0] Korean Category Mapping
+        major_data = [d for d in data if str(d.get('Category', '')).strip() in ['Major', '주요', '주요종목']]
+        crypto_data = [d for d in data if str(d.get('Category', '')).strip() in ['Crypto', 'Coin', '코인', '가상화폐'] and d not in major_data]
         watch_data = [d for d in data if d not in major_data and d not in crypto_data]
 
         # [v2.7.0] 국가별 섹션 분리
@@ -562,42 +577,73 @@ class StockDataUpdater:
 
         return final_list
 
-    def get_watchlist(self):
-        """관심종목_요청 기반으로 관심종목_관리 동기화 및 데이터 반환"""
+    def _map_category_to_korean(self, category):
+        """[v2.7.0] Map English/Legacy categories to Korean standard terms"""
+        c = str(category).strip().lower()
+        if c in ['index', '지수']: return '지수'
+        if c in ['exchange', '환율']: return '환율'
+        if c in ['major', '주요', '주요종목']: return '주요종목'
+        if c in ['crypto', 'coin', '코인', '가상화폐']: return '가상화폐'
+        if c in ['watchlist', '관심', '관심종목', '']: return '관심종목'
+        return category # Fallback
+
+    def get_stock_list(self):
+        """[Renamed] 종목_요청 기반으로 종목_관리 동기화 및 데이터 반환"""
         try:
-            # 1. 관심종목_요청 시트 로드 (없으면 생성)
+            # 1. 종목_요청 시트 로드 (없으면 생성 / 마이그레이션)
+            req_sheet_name = '종목_요청'
             try:
-                rq_ws = self.sh.worksheet('관심종목_요청')
+                # Check for migration
+                try:
+                    self.sh.worksheet(req_sheet_name)
+                except gspread.exceptions.WorksheetNotFound:
+                    old_ws = self.sh.worksheet('관심종목_요청')
+                    old_ws.update_title(req_sheet_name)
+                    print(f"Migrated sheet '관심종목_요청' to '{req_sheet_name}'")
+            except: pass # '관심종목_요청' didn't exist either
+
+            try:
+                rq_ws = self.sh.worksheet(req_sheet_name)
             except gspread.exceptions.WorksheetNotFound:
-                # 구버전 호환 또는 신규 생성
                 if not self.debug_mode:
-                    rq_ws = self.sh.add_worksheet(title='관심종목_요청', rows=100, cols=6)
+                    rq_ws = self.sh.add_worksheet(title=req_sheet_name, rows=100, cols=6)
                     rq_ws.append_row(['티커', '종목명', '카테고리', '메모', '사용여부', '검색결과'])
-                    print("Created '관심종목_요청' sheet.")
+                    print(f"Created '{req_sheet_name}' sheet.")
                 else:
-                    return [] # Dry-run에서 시트 없으면 빈 리스트 반환 혹은 에러 처리
+                    return [] 
             
             requests = rq_ws.get_all_records()
             # [v2.7.0] 초기 요청 데이터 로그 (검증용)
-            self._log_payload("watchlist_request", requests)
+            self._log_payload("watchlist_request", requests) # Key kept as 'watchlist_request' for legacy compatibility in logs
+
             
             # 한글/영어 키 모두 대응 (과도기 지원)
             def get_val(r, kor, eng): return r.get(kor, r.get(eng, ''))
 
-            # 2. 관심종목_관리 시트 로드 (없으면 생성)
+            # 2. 종목_관리 시트 로드 (없으면 생성 / 마이그레이션)
+            mgmt_sheet_name = '종목_관리'
             try:
-                mgmt_ws = self.sh.worksheet('관심종목_관리')
+                # Check for migration
+                try:
+                    self.sh.worksheet(mgmt_sheet_name)
+                except gspread.exceptions.WorksheetNotFound:
+                    old_ws = self.sh.worksheet('관심종목_관리')
+                    old_ws.update_title(mgmt_sheet_name)
+                    print(f"Migrated sheet '관심종목_관리' to '{mgmt_sheet_name}'")
+            except: pass
+
+            try:
+                mgmt_ws = self.sh.worksheet(mgmt_sheet_name)
             except gspread.exceptions.WorksheetNotFound:
                 if not self.debug_mode:
-                    mgmt_ws = self.sh.add_worksheet(title='관심종목_관리', rows=100, cols=10)
+                    mgmt_ws = self.sh.add_worksheet(title=mgmt_sheet_name, rows=100, cols=10)
                     mgmt_ws.append_row(['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
                 else:
-                    # Dry-run 시 시트가 없으면 진행 불가하므로 빈 리스트 반환
-                    print("Debug Mode: '관심종목_관리' sheet not found.")
+                    print(f"Debug Mode: '{mgmt_sheet_name}' sheet not found.")
                     return []
             
             current_mgmt = mgmt_ws.get_all_records()
-            # 중복 체크 고도화: (국가, 티커) 튜플로 관리 (v2.6.0)
+            # 중복 체크 고도화
             mgmt_keys = set()
             for r in current_mgmt:
                 a_type = r.get('구분', r.get('Asset', 'US'))
@@ -627,7 +673,8 @@ class StockDataUpdater:
                 ticker_raw = str(get_val(req, '티커', 'Ticker')).strip()
                 name_req = str(get_val(req, '종목명', 'Name')).strip()
                 enabled = str(get_val(req, '사용여부', 'RequestEnabled')).upper() == 'TRUE'
-                category = str(get_val(req, '카테고리', 'Category')).strip()
+                category_raw = str(get_val(req, '카테고리', 'Category')).strip()
+                category = self._map_category_to_korean(category_raw) # Korean mapping applied
                 memo = get_val(req, '메모', 'Memo')
                 
                 if not (ticker_raw or name_req):
@@ -745,11 +792,13 @@ class StockDataUpdater:
 
             # 4-2. 관리 시트에 새 종목 일괄 추가
             if rows_to_add:
+                # [Important] Ensure categories in rows_to_add are also Korean mapped if not already
+                # (They were mapped when created in recent loop)
                 if not self.debug_mode:
                     mgmt_ws.append_rows(rows_to_add)
-                    for r in rows_to_add: print(f"Added to management: {r[1]}")
+                    for r in rows_to_add: print(f"Added to management: {r[1]} ({r[3]})")
                 else:
-                    for r in rows_to_add: print(f"Added to management (Dry-Run): {r[1]}")
+                    for r in rows_to_add: print(f"Added to management (Dry-Run): {r[1]} ({r[3]})")
 
             # 4-3. 관리 시트에서 비활성 종목 일괄 삭제
             if keys_to_remove:
@@ -775,10 +824,10 @@ class StockDataUpdater:
             return mgmt_ws.get_all_records()
 
         except Exception as e:
-            print(f"Error in Watchlist Sync: {e}")
+            print(f"Error in Stock List Sync: {e}")
             # 에러 발생 시 기존 방식대로라도 시도
             try:
-                ws = self.sh.worksheet('관심종목_관리')
+                ws = self.sh.worksheet('종목_관리')
                 return ws.get_all_records()
             except:
                 return []
@@ -817,8 +866,8 @@ class StockDataUpdater:
     def process_and_report(self, mode="AUTO", manual_date=False):
         print(f"--- Running Updater (v{VERSION}, Mode: {mode}, Target: {self.target_date}) ---")
         
-        print("1. 동기화 중: 관심종목_요청 내역 반영...")
-        watchlist_raw = self.get_watchlist()
+        print("1. 동기화 중: 종목_요청 내역 반영...")
+        watchlist_raw = self.get_stock_list()
         # [v2.7.0] 관리 시트 데이터 로그 (검증용)
         self._log_payload("watchlist_management", watchlist_raw)
         
@@ -912,10 +961,10 @@ class StockDataUpdater:
         market_all = major_data + watch_data 
 
         # 3.5. 기록 중: '관심종목_관리' 종목 정보 업데이트 (우선순위 상향)
-        print("3.5. 기록 중: '관심종목_관리' 종목 정보 업데이트...")
+        print("3.5. 기록 중: '종목_관리' 종목 정보 업데이트...")
         # 수집된 최신 정보(가격, 추천 등)를 관리 시트에 반영
         try:
-            mgmt_ws = self.sh.worksheet('관심종목_관리')
+            mgmt_ws = self.sh.worksheet('종목_관리')
             mgmt_data = mgmt_ws.get_all_records()
             for i, row_dict in enumerate(mgmt_data):
                 ticker = str(row_dict.get('티커', row_dict.get('Ticker', '')))
@@ -934,7 +983,7 @@ class StockDataUpdater:
                     except Exception as e:
                         print(f"Error updating mgmt row for {ticker}: {e}")
         except Exception as e:
-            print(f"Warning: 관심종목_관리 업데이트 중 실패: {e}")
+            print(f"Warning: 종목_관리 업데이트 중 실패: {e}")
 
         # [v2.7.0] 4. 수집 중: 주의종목 (순서 변경: 오늘 탭 갱신 전 수집)
         print("3.6. 수집 중: 주의종목 (네이버 증권 + FDR 전수 조사 + 자체 분석)...")

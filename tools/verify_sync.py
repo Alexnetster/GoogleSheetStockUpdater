@@ -57,16 +57,16 @@ class StockDataVerifier(StockDataUpdater):
 
         # 2. get_watchlist 가로채기 (real_watchlist 옵션 시 생략)
         if not self.real_watchlist:
-            orig_get_watchlist = self.get_watchlist
-            def mocked_get_watchlist():
+            orig_get_watch = self.get_stock_list
+            def mocked_get_stock_list():
                 print("   [MOCK] Providing dummy watchlist data. (Use --real-watchlist to fetch actual)")
                 return [
-                    {'Asset': 'KR', 'Ticker': '005930', 'Name': '삼성전자', 'Category': 'Major', '메모': '삼성 반등 기원', '전문가의견': '매수'},
-                    {'Asset': 'US', 'Ticker': 'AAPL', 'Name': 'Apple Inc.', 'Category': 'Major', 'Memo': '아이폰 호재'},
-                    {'Asset': 'KR', 'Ticker': '000660', 'Name': 'SK하이닉스', 'Category': 'Watchlist', 'Recommendation': 'Buy'},
-                    {'Asset': 'Coin', 'Ticker': 'BTC', 'Name': 'Bitcoin', 'Category': 'Crypto'}
+                    {'Asset': 'KR', 'Ticker': '005930', 'Name': '삼성전자', 'Category': '주요종목', '메모': '삼성 반등 기원', '전문가의견': '매수'},
+                    {'Asset': 'US', 'Ticker': 'AAPL', 'Name': 'Apple Inc.', 'Category': '주요종목', 'Memo': '아이폰 호재'},
+                    {'Asset': 'KR', 'Ticker': '000660', 'Name': 'SK하이닉스', 'Category': '관심종목', 'Recommendation': 'Buy'},
+                    {'Asset': 'Coin', 'Ticker': 'BTC', 'Name': 'Bitcoin', 'Category': '가상화폐'}
                 ]
-            self.get_watchlist = mocked_get_watchlist
+            self.get_stock_list = mocked_get_stock_list
         else:
             print("   [INFO] Using REAL Watchlist data (Read-Only Mode).")
 
@@ -79,9 +79,9 @@ class StockDataVerifier(StockDataUpdater):
                 last_trading -= datetime.timedelta(days=1)
             
             return {
-                'KOSPI': {'price': 2500.0, 'change': 10.0, 'rate': 0.4, 'date': last_trading.isoformat(), 'category': 'index'},
-                'S&P500': {'price': 4700.0, 'change': 20.0, 'rate': 0.42, 'date': last_trading.isoformat(), 'category': 'index'},
-                'USD/KRW': {'price': 1300.0, 'change': 5.0, 'rate': 0.38, 'date': last_trading.isoformat(), 'category': 'exchange'}
+                'KOSPI': {'price': 2500.0, 'change': 10.0, 'rate': 0.4, 'date': last_trading.isoformat(), 'category': '지수'},
+                'S&P500': {'price': 4700.0, 'change': 20.0, 'rate': 0.42, 'date': last_trading.isoformat(), 'category': '지수'},
+                'USD/KRW': {'price': 1300.0, 'change': 5.0, 'rate': 0.38, 'date': last_trading.isoformat(), 'category': '환율'}
             }
         self.get_market_indices = mocked_get_indices
 
@@ -89,12 +89,12 @@ class StockDataVerifier(StockDataUpdater):
         def mocked_get_stock_data(tickers, asset_type):
             res = []
             for t in tickers:
-                # Find category from self.watchlist (created in get_watchlist)
-                category = "Watchlist" # Default
+                # Find category from self.watchlist (created in get_stock_list)
+                category = "관심종목" # Default
                 if hasattr(self, 'watchlist'):
                     for item in self.watchlist:
                         if str(item.get('Ticker')) == str(t):
-                             category = item.get('Category', 'Watchlist')
+                             category = item.get('Category', '관심종목')
                              break
                 
                 res.append({

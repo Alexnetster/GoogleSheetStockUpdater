@@ -17,11 +17,12 @@ SHEET_SCHEMA = {
         'headers': ['항목', '값1', '값2', '값3', '값4', '값5', '값6'],
         'description': '당일 시장 현황 및 주요 종목 대시보드'
     },
-    '관심종목_요청': {
+
+    '종목_요청': {
         'headers': ['티커', '종목명', '카테고리', '메모', '사용여부', '검색결과'],
         'description': '사용자 입력 레이어 (종목 추가/삭제/분류)'
     },
-    '관심종목_관리': {
+    '종목_관리': {
         'headers': ['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'],
         'description': '시스템 동기화 및 데이터 관리 레이어 (DB)'
     },
@@ -35,22 +36,25 @@ SHEET_SCHEMA = {
 DEFAULT_BOOTSTRAP_DATA = [
     # [티커, 종목명, 카테고리, 메모, 사용여부, 검색결과]
     # Indices
-    ['^KS11', 'KOSPI', 'Index', '국내 코스피 지수', 'TRUE', 'TRUE'],
-    ['^KQ11', 'KOSDAQ', 'Index', '국내 코스닥 지수', 'TRUE', 'TRUE'],
-    ['^GSPC', 'S&P500', 'Index', '미국 S&P500 지수', 'TRUE', 'TRUE'],
-    ['^IXIC', 'NASDAQ', 'Index', '미국 나스닥 지수', 'TRUE', 'TRUE'],
-    ['USDKRW=X', 'USD/KRW', 'Exchange', '원/달러 환율', 'TRUE', 'TRUE'],
+    ['^KS11', 'KOSPI', '지수', '국내 코스피 지수', 'TRUE', 'TRUE'],
+    ['^KQ11', 'KOSDAQ', '지수', '국내 코스닥 지수', 'TRUE', 'TRUE'],
+    ['^GSPC', 'S&P500', '지수', '미국 S&P500 지수', 'TRUE', 'TRUE'],
+    ['^IXIC', 'NASDAQ', '지수', '미국 나스닥 지수', 'TRUE', 'TRUE'],
+    ['USDKRW=X', 'USD/KRW', '환율', '원/달러 환율', 'TRUE', 'TRUE'],
     # Major Stocks
-    ['005930', '삼성전자', 'Major', '국내 시총 1위', 'TRUE', 'TRUE'],
-    ['000660', 'SK하이닉스', 'Major', '국내 반도체 주요', 'TRUE', 'TRUE'],
-    ['AAPL', 'Apple', 'Major', '미국 시총 상위', 'TRUE', 'TRUE'],
-    ['NVDA', 'Nvidia', 'Major', 'AI 반도체 리더', 'TRUE', 'TRUE'],
-    ['TSLA', 'Tesla', 'Major', '전기차/자율주행', 'TRUE', 'TRUE'],
+    ['005930', '삼성전자', '주요종목', '국내 시총 1위', 'TRUE', 'TRUE'],
+    ['000660', 'SK하이닉스', '주요종목', '국내 반도체 주요', 'TRUE', 'TRUE'],
+    ['AAPL', 'Apple', '주요종목', '미국 시총 상위', 'TRUE', 'TRUE'],
+    ['NVDA', 'Nvidia', '주요종목', 'AI 반도체 리더', 'TRUE', 'TRUE'],
+    ['TSLA', 'Tesla', '주요종목', '전기차/자율주행', 'TRUE', 'TRUE'],
     # Crypto (24/7 Assets)
-    ['BTC-USD', 'Bitcoin', 'Crypto', '크립토 대장주', 'TRUE', 'TRUE'],
-    ['ETH-USD', 'Ethereum', 'Crypto', '알트코인 대장', 'TRUE', 'TRUE'],
-    ['XRP-USD', 'Ripple', 'Crypto', '송금 최적화 코인', 'TRUE', 'TRUE'],
-    ['SOL-USD', 'Solana', 'Crypto', '고성능 메인넷', 'TRUE', 'TRUE'],
+    ['BTC-USD', 'Bitcoin', '가상화폐', '크립토 대장주', 'TRUE', 'TRUE'],
+    ['ETH-USD', 'Ethereum', '가상화폐', '알트코인 대장', 'TRUE', 'TRUE'],
+    ['XRP-USD', 'Ripple', '가상화폐', '송금 최적화 코인', 'TRUE', 'TRUE'],
+    ['SOL-USD', 'Solana', '가상화폐', '고성능 메인넷', 'TRUE', 'TRUE'],
+    # Watchlist Example
+    ['035420', 'NAVER', '관심종목', '국내 플랫폼 기업', 'TRUE', 'TRUE'],
+    ['GOOGL', 'Alphabet A', '관심종목', '구글 검색', 'TRUE', 'TRUE'],
 ]
 
 def initialize(reset_mode=False):
@@ -111,8 +115,8 @@ def initialize(reset_mode=False):
             ws.update(values=[config['headers']], range_name='A1')
             print(f"  -> [{name}] 생성 완료.")
 
-            # '관심종목_요청' 탭인 경우 기본 데이터 주입
-            if name == '관심종목_요청':
+            # '종목_요청' 탭인 경우 기본 데이터 주입
+            if name == '종목_요청':
                 print("  -> 시스템 기본 종목군(Indices & Major)을 채웁니다...")
                 ws.append_rows(DEFAULT_BOOTSTRAP_DATA)
 
