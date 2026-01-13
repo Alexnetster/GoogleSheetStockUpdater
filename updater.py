@@ -195,11 +195,15 @@ class StockDataUpdater:
                 
                 stock = yf.Ticker(sym)
                 hist = stock.history(start=start_date, end=end_date, prepost=True)
-                if hist.empty: continue
+                if hist.empty: 
+                    print(f"   [DEBUG] Skip {ticker}: hist empty")
+                    continue
                 
                 # target_date 이하의 최신 데이터
                 hist = hist[hist.index.date <= self.target_date]
-                if len(hist) < 2: continue
+                if len(hist) < 2: 
+                    print(f"   [DEBUG] Skip {ticker}: hist < 2 (len={len(hist)})")
+                    continue
                 
                 curr = hist.iloc[-1]
                 prev = hist.iloc[-2]
@@ -318,15 +322,18 @@ class StockDataUpdater:
         rows = []
         
         # 세션명 결정
-        target_date_str = self.target_date.strftime('%Y-%m-%d')
-        now = datetime.datetime.now()
-        now_time_str = now.strftime('%H:%M:%S')
+        today_date = self.target_date.strftime('%Y-%m-%d')
+        # [v2.7.1] Timezone Fix: Force KST (UTC+9) for display
+        now_utc = datetime.datetime.utcnow()
+        now_kst = now_utc + datetime.timedelta(hours=9)
+        now_time_str = now_kst.strftime('%H:%M:%S')
+        
         weekdays = ["월", "화", "수", "목", "금", "토", "일"]
-        full_date_display = f"{target_date_str} ({weekdays[self.target_date.weekday()]})"
+        full_date_display = f"{today_date} ({weekdays[self.target_date.weekday()]})"
         
         session_name = mode
         if mode == "AUTO":
-            h = now.hour
+            h = now_kst.hour
             if 7 <= h < 11: session_name = "MORNING"
             elif 11 <= h < 15: session_name = "MIDDAY"
             elif 15 <= h < 19: session_name = "CLOSE"
@@ -352,10 +359,6 @@ class StockDataUpdater:
                 is_kr_idx = k in ['KOSPI', 'KOSDAQ']
                 is_us_idx = k in ['S&P500', 'NASDAQ', 'Dow Jones']
                 is_exchange = (v.get('category') == 'exchange' or k == 'USD/KRW')
-                
-                # [v2.7.0] 휴장이라도 수집된 지수가 있으면 표시 (필터링 제거)
-                # if is_kr_idx and not is_kr_open: continue
-                # if is_us_idx and not is_us_open: continue
                 
                 if is_kr_idx: country, exchange = "한국", k
                 elif is_us_idx: country, exchange = "미국", k
@@ -423,13 +426,13 @@ class StockDataUpdater:
         if not self.debug_mode:
             ws.update(values=rows, range_name=range_name)
         
-        # 서식 지정 (간략화)
         # 서식 지정 (Explicit Formatting)
         try:
             # 1. 포맷 정의
             fmt_left = CellFormat(horizontalAlignment='LEFT', textFormat=TextFormat(bold=False))
             fmt_right = CellFormat(horizontalAlignment='RIGHT', textFormat=TextFormat(bold=False))
-            fmt_header = CellFormat(horizontalAlignment='CENTER', textFormat=TextFormat(bold=True))
+            fmt_header_center = CellFormat(horizontalAlignment='CENTER', textFormat=TextFormat(bold=True))
+            fmt_header_left = CellFormat(horizontalAlignment='LEFT', textFormat=TextFormat(bold=True))
             
             # 2. 전체 데이터 영역 기본 정렬 (데이터 행 기준)
             # A~C열: 좌측 정렬 (자산, 티커, 종목명)
@@ -443,8 +446,14 @@ class StockDataUpdater:
                 if not r: continue
                 # 섹션 헤더 (===) 또는 컬럼 헤더 (자산, 번호 등)
                 str_val = str(r[0])
-                if str_val.startswith("===") or str_val in header_keywords:
-                    format_cell_range(ws, f'A{start_row+i}:G{start_row+i}', fmt_header)
+                if str_val.startswith("==="):
+                    # 최상단 브리핑 헤더는 왼쪽 정렬, 그 외 섹션 헤더는 가운데 정렬
+                    if "브리핑" in str_val or "리뷰" in str_val or "업데이트" in str_val:
+                         format_cell_range(ws, f'A{start_row+i}:G{start_row+i}', fmt_header_left)
+                    else:
+                         format_cell_range(ws, f'A{start_row+i}:G{start_row+i}', fmt_header_center)
+                elif str_val in header_keywords:
+                    format_cell_range(ws, f'A{start_row+i}:G{start_row+i}', fmt_header_center)
             
             print(f"✅ 오늘 시트 업데이트 완료 ({session_kr}) - 포맷 적용됨")
         except Exception as e:
@@ -549,7 +558,7 @@ class StockDataUpdater:
                     item.get('Name', ''),
                     item.get('FormattedPrice', ''),
                     item.get('ChangeRate', 0),
-                    item.get('Volume', 0),
+                    self._format_large_number(item.get('Volume', 0)),
                     item.get('Source', '')
                 ]
                 rows_to_add.append(row)
@@ -575,7 +584,7 @@ class StockDataUpdater:
                         item.get('Name', ''),
                         item.get('FormattedPrice', ''),
                         item.get('ChangeRate', 0),
-                        item.get('Volume', 0),
+                        self._format_large_number(item.get('Volume', 0)),
                         item.get('Source', '')
                     ])
                 if all_rows:
@@ -958,7 +967,7 @@ class StockDataUpdater:
         major_data = [] # 주요 종목 (지수 옆 표시용)
         
         for item in watchlist_raw:
-            ticker = str(item.get('Ticker', ''))
+            ticker = str(item.get('티커', item.get('Ticker', ''))).strip()
             if not ticker: continue
             
             # Use robust key matching
@@ -1506,21 +1515,19 @@ class StockDataUpdater:
                     sa_email = sa_info.get('client_email', sa_email)
                 except: pass
                 print(f"   >>> {sa_email}")
-                print("4. IMPORTANT: Make sure the permission is set to 'Make changes to events' (일정 변경).")
-                print("5. Double check if the Calendar ID in GitHub Secrets has ANY typos (even one letter).")
-                print("---------------------------------")
-            elif "insufficientPermissions" in str(e):
-                print("HINT: Insufficient permissions. Make sure the service account has 'Make changes to events' access.")
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('target_date', nargs='?', default=None)
-    parser.add_argument('--mode', choices=['MORNING', 'MIDDAY', 'CLOSE', 'EVENING', 'AUTO'], default='AUTO')
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Update Stock Data to Google Sheets')
+    parser.add_argument('--date', type=str, help='Target Date (YYYY-MM-DD)')
+    parser.add_argument('--mode', type=str, default='AUTO', help='Execution Mode: AUTO, MORNING, MIDDAY, CLOSE, EVENING')
+    parser.add_argument('--debug', action='store_true', help='Enable Debug Mode (Dry-Run)')
+    
     args = parser.parse_args()
     
-    if not SPREADSHEET_ID:
-        print("ERROR: SPREADSHEET_ID is missing.")
-        sys.exit(1)
-        
-    updater = StockDataUpdater(target_date=args.target_date)
-    updater.process_and_report(mode=args.mode, manual_date=(args.target_date is not None))
+    updater = StockDataUpdater(target_date=args.date)
+    # [v2.6.9] Debug Mode Injection
+    if args.debug:
+        updater.debug_mode = True
+        print(">>> [DEBUG MODE] Enabled. Google Sheet/Calendar updates will be SKIPPED.")
+
+    updater.process_and_report(mode=args.mode, manual_date=bool(args.date))
