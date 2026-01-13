@@ -952,7 +952,7 @@ class StockDataUpdater:
                 final_rec = item.get('Recommendation', res[0].get('Recommendation', '-'))
                 res[0]['FinalRecommendation'] = final_rec
                 
-                if category in ['major', '주요']:
+                if category in ['major', '주요', '주요종목']:
                     major_data.append(res[0])
                 else:
                     watch_data.append(res[0])
@@ -1100,7 +1100,7 @@ class StockDataUpdater:
                     report_lines.append("")
 
         # 2. [주요종목] 섹션
-        major_list = [d for d in market_all if str(d.get('Category', '')).lower() == 'major']
+        major_list = [d for d in market_all if str(d.get('Category', '')).lower() in ['major', '주요종목']]
         if major_list:
             report_lines.append("=== [주요종목] ===")
             for a_code, a_name in [('KR', '한국'), ('US', '미국'), ('Coin', '코인')]:
@@ -1148,8 +1148,8 @@ class StockDataUpdater:
         final_idx_text = "\n".join(idx_report)
 
         # 5-2. 섹션별 종목 텍스트 (Local filtering)
-        major_data = [d for d in market_all if str(d.get('Category', '')).lower() in ['major', '주요']]
-        crypto_data = [d for d in market_all if str(d.get('Category', '')).lower() in ['crypto', 'coin', '코인'] and d not in major_data]
+        major_data = [d for d in market_all if str(d.get('Category', '')).lower() in ['major', '주요', '주요종목']]
+        crypto_data = [d for d in market_all if str(d.get('Category', '')).lower() in ['crypto', 'coin', '코인', '가상화폐'] and d not in major_data]
         watch_data = [d for d in market_all if d not in major_data and d not in crypto_data]
 
         def format_item_list(items):
