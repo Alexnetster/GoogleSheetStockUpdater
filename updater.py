@@ -1009,6 +1009,12 @@ class StockDataUpdater:
             mgmt_ws = self.sh.worksheet('종목_관리')
             mgmt_data = mgmt_ws.get_all_records()
             
+            # [v2.7.4] Create optimized lookup map (Normalized Ticker -> Info)
+            stock_map = {}
+            for d in market_all:
+                t_n = self._normalize_ticker(d['Ticker'], d['Asset'])
+                stock_map[t_n] = d
+            
             # [v2.7.2] Column Migration check
             headers = mgmt_ws.row_values(1)
             req_cols = ['현재가', '변동률', '거래량']
@@ -1040,13 +1046,34 @@ class StockDataUpdater:
 
             for i, row_dict in enumerate(mgmt_data):
                 ticker = str(row_dict.get('티커', row_dict.get('Ticker', '')))
-                # market_all에서 해당 티커 찾기
-                info = next((d for d in market_all if d['Ticker'] == ticker), None)
+                asset = str(row_dict.get('구분', row_dict.get('Asset', ''))).upper()
+                name = str(row_dict.get('종목명', row_dict.get('Name', '')))
+                
+                t_norm = self._normalize_ticker(ticker, asset)
+                
+                # Check Stock Map first
+                info = stock_map.get(t_norm)
+                
+                # If not found, check Indices using Name (Name is key in indices dict)
+                if not info and name in indices:
+                    idx_data = indices[name]
+                    info = {
+                        'FormattedPrice': f"{idx_data['price']:,.2f}",
+                        'ChangeRate': idx_data['rate'],
+                        'Volume': 0, # Index volume often N/A here
+                        'Theme': '지수/환율',
+                        'Recommendation': '-',
+                        'InfoLink': '',
+                        'Name': name,
+                        'Asset': asset, # Ensure asset is included for consistency
+                        'Ticker': ticker # Ensure ticker is included for consistency
+                    }
+
                 if info:
                     row_idx = i + 2
                     try:
-                        # Batch update cell by using indexes from cached headers
-                        if '현재가' in headers: mgmt_ws.update_cell(row_idx, headers.index('현재가') + 1, info.get('FormattedPrice', '-'))
+                        # Update cells
+                        if '현재가' in headers: mgmt_ws.update_cell(row_idx, headers.index('현재가') + 1, info.get('FormattedPrice', ''))
                         if '변동률' in headers: mgmt_ws.update_cell(row_idx, headers.index('변동률') + 1, f"{info.get('ChangeRate', 0):+.2f}%")
                         if '거래량' in headers: mgmt_ws.update_cell(row_idx, headers.index('거래량') + 1, self._format_large_number(info.get('Volume', 0)))
 
