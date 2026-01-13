@@ -1044,6 +1044,27 @@ class StockDataUpdater:
                 naver_unusual.extend(scrape_price_limit(max_items=5))
                     
                 print(f">>> 수집 완료: 전수조사 및 스크래핑 총 {len(naver_unusual)}개")
+                
+                # [v2.7.1] Naver 외국인순매수 등 가격 정보가 없는 항목 보정
+                missing_price_tickers = [d['Ticker'] for d in naver_unusual if d.get('Price', 0) == 0]
+                if missing_price_tickers:
+                    print(f">>> 가격 정보 누락 {len(missing_price_tickers)}개 보정 중...")
+                    # 한번에 가져오기 (배치 처리)
+                    filled_data = self.get_stock_data(missing_price_tickers, 'KR')
+                    
+                    # 받아온 데이터로 naver_unusual 업데이트
+                    fill_map = {d['Ticker']: d for d in filled_data}
+                    for i, d in enumerate(naver_unusual):
+                        if d.get('Price', 0) == 0 and d['Ticker'] in fill_map:
+                            new_d = fill_map[d['Ticker']]
+                            # 카테고리와 출처는 원래 것 유지, 나머지는 업데이트
+                            orig_cat = d.get('Category')
+                            orig_src = d.get('Source')
+                            
+                            d.update(new_d)
+                            d['Category'] = orig_cat
+                            d['Source'] = orig_src
+                            
             except Exception as e:
                 print(f"Warning: 스크래핑/전수조사 중 실패: {e}")
         elif not is_kr_open:
