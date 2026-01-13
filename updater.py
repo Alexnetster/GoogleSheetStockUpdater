@@ -1082,14 +1082,25 @@ class StockDataUpdater:
         
         print(f">>> 자체 분석: {len(internal_unusual)}개 종목 추출 완료")
         
-        # 4-3. 데이터 병합 및 중복 제거
-        all_unusual_raw = naver_unusual + internal_unusual
-        seen = set()
+        # 4-3. 데이터 병합 및 중복 제거 (Priority: FDR > Naver)
+        # 딕셔너리를 사용하여 중복 키(Ticker) 발생 시 FDR 데이터(internal_unusual)가 덮어쓰도록 함
+        merged_map = {}
+        
+        # 1. Naver 데이터 먼저 적재
+        for d in naver_unusual:
+            merged_map[d['Ticker']] = d
+            
+        # 2. FDR 데이터 덮어쓰기 (가격 정보가 더 신뢰할 수 있음)
+        for d in internal_unusual:
+            merged_map[d['Ticker']] = d
+            
+        # 3. 리스트 변환 및 최종 필터링 (가격 0원 제거)
         current_unusual_items = []
-        for d in all_unusual_raw:
-            if d['Ticker'] not in seen:
+        for d in merged_map.values():
+            if d.get('Price', 0) > 0:
                 current_unusual_items.append(d)
-                seen.add(d['Ticker'])
+            else:
+                print(f" [Filter] Skipped invalid item (Price=0): {d['Name']} ({d['Ticker']})")
         
         # [v2.7.0] 버퍼링 로직 적용: 일간 누적 데이터 가져오기
         unusual = self.manage_cautionary_buffer(current_unusual_items)
