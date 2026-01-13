@@ -88,10 +88,10 @@ class StockDataUpdater:
 
     def _format_large_number(self, n):
         if n is None or pd.isna(n): return "-"
-        if n >= 1e12: return f"{n/1e12:.2f}T"
-        if n >= 1e9: return f"{n/1e9:.2f}B"
-        if n >= 1e6: return f"{n/1e6:.2f}M"
-        if n >= 1e3: return f"{n/1e3:.2f}K"
+        if n >= 1e12: return f"{n/1e12:,.2f}T"
+        if n >= 1e9: return f"{n/1e9:,.2f}B"
+        if n >= 1e6: return f"{n/1e6:,.2f}M"
+        if n >= 1e3: return f"{n/1e3:,.2f}K"
         return f"{int(n):,}"
 
     def _format_price(self, n, asset_type):
@@ -678,8 +678,8 @@ class StockDataUpdater:
                 mgmt_ws = self.sh.worksheet(mgmt_sheet_name)
             except gspread.exceptions.WorksheetNotFound:
                 if not self.debug_mode:
-                    mgmt_ws = self.sh.add_worksheet(title=mgmt_sheet_name, rows=100, cols=10)
-                    mgmt_ws.append_row(['구분', '티커', '종목명', '카테고리', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
+                    mgmt_ws = self.sh.add_worksheet(title=mgmt_sheet_name, rows=100, cols=15)
+                    mgmt_ws.append_row(['카테고리', '구분', '티커', '종목명', '현재가', '변동률', '거래량', '테마', '메모', '알림가', '시스템추천', '전문가의견', '정보링크'])
                 else:
                     print(f"Debug Mode: '{mgmt_sheet_name}' sheet not found.")
                     return []
@@ -788,7 +788,7 @@ class StockDataUpdater:
                         if key not in mgmt_keys:
                             name_display = self.kr_name_map.get(found_ticker, current_name or found_ticker)
                             rows_to_add.append([
-                                asset_type, found_ticker, name_display, category, "", memo, "", "", "", ""
+                                category, asset_type, found_ticker, name_display, "", "", "", "", memo, "", "", "", ""
                             ])
                             mgmt_keys.add(key)
                         else:
@@ -1008,16 +1008,48 @@ class StockDataUpdater:
         try:
             mgmt_ws = self.sh.worksheet('종목_관리')
             mgmt_data = mgmt_ws.get_all_records()
+            
+            # [v2.7.2] Column Migration check
+            headers = mgmt_ws.row_values(1)
+            req_cols = ['현재가', '변동률', '거래량']
+            missing_cols = [c for c in req_cols if c not in headers]
+            
+            if missing_cols:
+                print(f"Migrating '종목_관리': Adding columns {missing_cols}...")
+                name_idx = 3 # Default fallback
+                if '종목명' in headers: name_idx = headers.index('종목명') + 1
+                elif 'Name' in headers: name_idx = headers.index('Name') + 1
+                
+                # Insert empty columns (cols=3). Note: insert_cols inserts BEFORE index?
+                # Actually gspread insert_cols(values, col=1) inserts at 1.
+                # We want to insert AFTER Name. Name is at name_idx (1-based).
+                # So we insert at name_idx + 1.
+                
+                # Prepare values as list of lists for headers
+                vals = [[c] for c in req_cols] # [['현재가'], ['변동률'], ['거래량']]
+                # Check insert_cols support
+                try:
+                    if not self.debug_mode:
+                        mgmt_ws.insert_cols(vals, col=name_idx+1)
+                        print("Cols inserted.")
+                        headers = mgmt_ws.row_values(1) # Refresh
+                    else:
+                        print("Skipping insert_cols (Debug Mode)")
+                except Exception as e:
+                    print(f"Warning: Failed to insert columns: {e}")
+
             for i, row_dict in enumerate(mgmt_data):
                 ticker = str(row_dict.get('티커', row_dict.get('Ticker', '')))
                 # market_all에서 해당 티커 찾기
                 info = next((d for d in market_all if d['Ticker'] == ticker), None)
                 if info:
                     row_idx = i + 2
-                    # 필드 맵핑 (구분, 티커, 종목명, 카테고리, 테마, 메모, 알림가, 시스템추천, 전문가의견, 정보링크)
-                    # 영어/한글 혼용 대응을 위해 인덱스 기반 업데이트 권장
-                    headers = mgmt_ws.row_values(1)
                     try:
+                        # Batch update cell by using indexes from cached headers
+                        if '현재가' in headers: mgmt_ws.update_cell(row_idx, headers.index('현재가') + 1, info.get('FormattedPrice', '-'))
+                        if '변동률' in headers: mgmt_ws.update_cell(row_idx, headers.index('변동률') + 1, f"{info.get('ChangeRate', 0):+.2f}%")
+                        if '거래량' in headers: mgmt_ws.update_cell(row_idx, headers.index('거래량') + 1, self._format_large_number(info.get('Volume', 0)))
+
                         if '테마' in headers: mgmt_ws.update_cell(row_idx, headers.index('테마') + 1, info.get('Theme', '-'))
                         if '시스템추천' in headers: mgmt_ws.update_cell(row_idx, headers.index('시스템추천') + 1, info.get('Recommendation', '-'))
                         if '정보링크' in headers: mgmt_ws.update_cell(row_idx, headers.index('정보링크') + 1, info.get('InfoLink', ''))
