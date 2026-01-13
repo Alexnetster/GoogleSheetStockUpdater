@@ -1178,7 +1178,9 @@ class StockDataUpdater:
         print("6. 연동 중: 구글 캘린더...")
         
         # 제목 생성
-        now_kst = datetime.datetime.now()
+        # [v2.7.1] Timezone Fix: Force KST (UTC+9) for server environment
+        now_utc = datetime.datetime.utcnow()
+        now_kst = now_utc + datetime.timedelta(hours=9)
         session_tag = ""
         if mode == "MORNING" or (7 <= now_kst.hour <= 9): session_tag = " [모닝]"
         elif mode == "MIDDAY" or (11 <= now_kst.hour <= 13): session_tag = " [미드데이]"
