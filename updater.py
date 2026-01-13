@@ -493,6 +493,8 @@ class StockDataUpdater:
         # 2. 기존 데이터 로드 (누적용)
         existing_tickers = set()
         current_rows = []
+        has_duplicates_on_sheet = False
+
         if not self.debug_mode:
             raw_data = ws.get_all_records()
             for r in raw_data:
@@ -503,6 +505,11 @@ class StockDataUpdater:
                 
                 # 키: (Asset, Ticker)
                 key = (asset, ticker)
+                
+                if key in existing_tickers:
+                    has_duplicates_on_sheet = True
+                    continue # 중복된 행은 메모리 로드 단계에서 제외 (나중에 덮어실 때 제거됨)
+
                 existing_tickers.add(key)
                 
                 # 내부 로직용 영문 키로 변환하여 리스트에 추가
@@ -551,9 +558,30 @@ class StockDataUpdater:
                 # 반환 리스트에도 포맷 맞춰 추가
                 final_list.append(item)
         
-        # 4. 시트 업데이트
-        if rows_to_add and not self.debug_mode:
-            ws.append_rows(rows_to_add)
+        # 4. 시트 업데이트 (중복이 발견되었으면 전체 재작성, 아니면 추가만)
+        if not self.debug_mode:
+            if has_duplicates_on_sheet:
+                print(f" [Buffer] Duplicates detected. Rewriting sheet to clean up...")
+                ws.clear()
+                ws.append_row(['날짜', '자산', '티커', '종목명', '현재가', '변동률', '거래량', '출처'])
+                
+                # final_list를 row 형태로 변환
+                all_rows = []
+                for item in final_list:
+                    all_rows.append([
+                        target_date_str,
+                        item.get('Asset', ''),
+                        item.get('Ticker', ''),
+                        item.get('Name', ''),
+                        item.get('FormattedPrice', ''),
+                        item.get('ChangeRate', 0),
+                        item.get('Volume', 0),
+                        item.get('Source', '')
+                    ])
+                if all_rows:
+                    ws.append_rows(all_rows)
+            elif rows_to_add:
+                ws.append_rows(rows_to_add)
             
             # 서식 적용 (상단 정렬 & 우측 정렬)
             try:
