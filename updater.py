@@ -88,11 +88,25 @@ class StockDataUpdater:
 
     def _format_large_number(self, n):
         if n is None or pd.isna(n): return "-"
-        if n >= 1e12: return f"{n/1e12:,.2f}T"
-        if n >= 1e9: return f"{n/1e9:,.2f}B"
-        if n >= 1e6: return f"{n/1e6:,.2f}M"
-        if n >= 1e3: return f"{n/1e3:,.2f}K"
-        return f"{int(n):,}"
+        if isinstance(n, str):
+            # 이미 포맷된 경우 (K/M/B/T 포함) 그대로 반환
+            if any(s in n for s in ['K', 'M', 'B', 'T']): return n
+            if n in ['-', 'N/A']: return n
+            # 숫자형 문자열이면 변환 시도
+            try:
+                n = float(n.replace(',', ''))
+            except:
+                return n # 변환 실패시 원본 반환
+        
+        try:
+            val = float(n)
+        except: return str(n)
+
+        if val >= 1e12: return f"{val/1e12:,.2f}T"
+        if val >= 1e9: return f"{val/1e9:,.2f}B"
+        if val >= 1e6: return f"{val/1e6:,.2f}M"
+        if val >= 1e3: return f"{val/1e3:,.2f}K"
+        return f"{int(val):,}"
 
     def _format_price(self, n, asset_type):
         if n is None or pd.isna(n): return "-"
@@ -512,6 +526,12 @@ class StockDataUpdater:
                 raw_ticker = str(r.get('티커', r.get('Ticker', '')))
                 ticker = self._normalize_ticker(raw_ticker, asset)
                 
+                # [v2.7.6] Date Hygiene: Ignore rows that don't match strict target date
+                # This prevents "carrying over" old data if the clear-check failed or if manual edits occurred.
+                row_date = str(r.get('날짜', '')).strip()
+                if row_date and row_date != target_date_str:
+                    continue
+
                 # 키: (Asset, Ticker)
                 key = (asset, ticker)
                 
@@ -567,30 +587,30 @@ class StockDataUpdater:
                 # 반환 리스트에도 포맷 맞춰 추가
                 final_list.append(item)
         
-        # 4. 시트 업데이트 (중복이 발견되었으면 전체 재작성, 아니면 추가만)
+
+        # 4. 시트 업데이트 (항상 전체 재작성으로 중복 및 포맷 보장)
         if not self.debug_mode:
-            if has_duplicates_on_sheet:
-                print(f" [Buffer] Duplicates detected. Rewriting sheet to clean up...")
-                ws.clear()
-                ws.append_row(['날짜', '자산', '티커', '종목명', '현재가', '변동률', '거래량', '출처'])
-                
-                # final_list를 row 형태로 변환
-                all_rows = []
-                for item in final_list:
-                    all_rows.append([
-                        target_date_str,
-                        item.get('Asset', ''),
-                        item.get('Ticker', ''),
-                        item.get('Name', ''),
-                        item.get('FormattedPrice', ''),
-                        item.get('ChangeRate', 0),
-                        self._format_large_number(item.get('Volume', 0)),
-                        item.get('Source', '')
-                    ])
-                if all_rows:
-                    ws.append_rows(all_rows)
-            elif rows_to_add:
-                ws.append_rows(rows_to_add)
+            # Always rewrite to ensure cleanliness and correct formatting
+            # This handles "previous duplicate state" or any inconsistencies
+            print(f" [Buffer] Rewriting sheet to ensure unique items ({len(final_list)} items).")
+            ws.clear()
+            ws.append_row(['날짜', '자산', '티커', '종목명', '현재가', '변동률', '거래량', '출처'])
+            
+            # final_list를 row 형태로 변환
+            all_rows = []
+            for item in final_list:
+                all_rows.append([
+                    target_date_str,
+                    item.get('Asset', ''),
+                    item.get('Ticker', ''),
+                    item.get('Name', ''),
+                    item.get('FormattedPrice', ''),
+                    item.get('ChangeRate', 0),
+                    self._format_large_number(item.get('Volume', 0)),
+                    item.get('Source', '')
+                ])
+            if all_rows:
+                ws.append_rows(all_rows)
             
             # 서식 적용 (상단 정렬 & 우측 정렬)
             try:
@@ -976,6 +996,9 @@ class StockDataUpdater:
             
             asset_type = item.get('Asset', item.get('구분', 'US'))
             
+            # [v2.7.5] Normalize Ticker BEFORE fetching (Fix for '5930' vs '005930')
+            ticker = self._normalize_ticker(ticker, asset_type)
+            
             # 시장 개장 상태와 상관없이 '오늘' 탭을 위해 데이터를 수집합니다 (휴장일은 마지막 거래일 종가 표시)
             if asset_type == 'KR' and not is_kr_open:
                 # 휴장일이라도 데이터는 가져오되, 로그로 알림
@@ -1044,45 +1067,97 @@ class StockDataUpdater:
                 except Exception as e:
                     print(f"Warning: Failed to insert columns: {e}")
 
+            # [v2.7.5] Batch Update Implementation
+            # 1. Prepare data containers for each target column
+            # Map: ColName -> List of values (Strings)
+            target_update_cols = ['현재가', '변동률', '거래량', '테마', '시스템추천', '전문가의견', '정보링크', '종목명']
+            updates_by_col = {c: [] for c in target_update_cols}
+            
+            # 2. Iterate rows and calculate values (in-memory)
             for i, row_dict in enumerate(mgmt_data):
                 ticker = str(row_dict.get('티커', row_dict.get('Ticker', '')))
                 asset = str(row_dict.get('구분', row_dict.get('Asset', ''))).upper()
                 name = str(row_dict.get('종목명', row_dict.get('Name', '')))
-                
                 t_norm = self._normalize_ticker(ticker, asset)
                 
-                # Check Stock Map first
                 info = stock_map.get(t_norm)
-                
-                # If not found, check Indices using Name (Name is key in indices dict)
                 if not info and name in indices:
                     idx_data = indices[name]
                     info = {
                         'FormattedPrice': f"{idx_data['price']:,.2f}",
                         'ChangeRate': idx_data['rate'],
-                        'Volume': 0, # Index volume often N/A here
+                        'Volume': 0,
                         'Theme': '지수/환율',
                         'Recommendation': '-',
                         'InfoLink': '',
                         'Name': name,
-                        'Asset': asset, # Ensure asset is included for consistency
-                        'Ticker': ticker # Ensure ticker is included for consistency
+                        'ExpertOpinion_User': '-'
                     }
 
-                if info:
-                    row_idx = i + 2
-                    try:
-                        # Update cells
-                        if '현재가' in headers: mgmt_ws.update_cell(row_idx, headers.index('현재가') + 1, info.get('FormattedPrice', ''))
-                        if '변동률' in headers: mgmt_ws.update_cell(row_idx, headers.index('변동률') + 1, f"{info.get('ChangeRate', 0):+.2f}%")
-                        if '거래량' in headers: mgmt_ws.update_cell(row_idx, headers.index('거래량') + 1, self._format_large_number(info.get('Volume', 0)))
+                # Default values if info missing (keep existing? typically we overwrite with latest system data)
+                # But creating a full column list requires a value for EVERY row.
+                # If info is missing, we should probably keep existing value? 
+                # HOWEVER: constructing a 'range update' overwrites everything.
+                # So we must provide a value. If missing, we might blank it out or keep old.
+                # 'row_dict' has old values.
+                
+                val_price = str(row_dict.get('현재가', '-'))
+                val_change = str(row_dict.get('변동률', '0.00%'))
+                val_volume = str(row_dict.get('거래량', '-'))
+                val_theme = str(row_dict.get('테마', '-'))
+                val_rec = str(row_dict.get('시스템추천', '-'))
+                val_exp = str(row_dict.get('전문가의견', '-'))
+                val_link = str(row_dict.get('정보링크', ''))
+                val_name = str(row_dict.get('종목명', ''))
 
-                        if '테마' in headers: mgmt_ws.update_cell(row_idx, headers.index('테마') + 1, info.get('Theme', '-'))
-                        if '시스템추천' in headers: mgmt_ws.update_cell(row_idx, headers.index('시스템추천') + 1, info.get('Recommendation', '-'))
-                        if '정보링크' in headers: mgmt_ws.update_cell(row_idx, headers.index('정보링크') + 1, info.get('InfoLink', ''))
-                        if '종목명' in headers: mgmt_ws.update_cell(row_idx, headers.index('종목명') + 1, info.get('Name', ''))
-                    except Exception as e:
-                        print(f"Error updating mgmt row for {ticker}: {e}")
+                if info:
+                    val_price = str(info.get('FormattedPrice', '-'))
+                    val_change = f"{info.get('ChangeRate', 0):+.2f}%"
+                    val_volume = self._format_large_number(info.get('Volume', 0))
+                    val_theme = str(info.get('Theme', '-'))
+                    val_rec = str(info.get('FinalRecommendation', info.get('Recommendation', '-')))
+                    val_exp = str(info.get('ExpertOpinion_User', '-')) # User opinion usually stays? No, ExpertOpinion from info
+                    # Wait, 'ExpertOpinion' in mgmt sheet is '전문가의견'. In get_stock_data, we merge User input?
+                    # Actually, 'ExpertOpinion' column in mgmt is usually for User input or System?
+                    # In get_stock_data: res[0]['ExpertOpinion_User'] = item.get('전문가의견')
+                    # So we should preserve it if it's user input. But here we are UPDATING it.
+                    # Be careful. If '전문가의견' is managed by user, we shouldn't overwrite it with '-' unless we have new data.
+                    # Actually, lines 1004 copied it FROM item. So 'info' has the user's opinion.
+                    if info.get('ExpertOpinion_User'): val_exp = str(info.get('ExpertOpinion_User'))
+
+                    val_link = str(info.get('InfoLink', ''))
+                    val_name = str(info.get('Name', ''))
+
+                updates_by_col['현재가'].append([val_price])
+                updates_by_col['변동률'].append([val_change])
+                updates_by_col['거래량'].append([val_volume])
+                updates_by_col['테마'].append([val_theme])
+                updates_by_col['시스템추천'].append([val_rec])
+                updates_by_col['전문가의견'].append([val_exp])
+                updates_by_col['정보링크'].append([val_link])
+                updates_by_col['종목명'].append([val_name])
+
+            # 3. Perform Batch Updates (Column by Column)
+            try:
+                start_row = 2
+                end_row = start_row + len(mgmt_data) - 1
+                
+                for col_name, values in updates_by_col.items():
+                    if col_name in headers:
+                        col_idx = headers.index(col_name) + 1
+                        col_letter = gspread.utils.rowcol_to_a1(1, col_idx)[0]
+                        range_name = f"{col_letter}{start_row}:{col_letter}{end_row}"
+                        
+                        # Only update if we have data
+                        if values:
+                             mgmt_ws.update(values=values, range_name=range_name)
+                             # Short sleep to be kind to API quota (just in case)
+                             time.sleep(0.5)
+
+                print(f"Batch updated '종목_관리': {len(mgmt_data)} items.")
+
+            except Exception as e:
+                print(f"Error during batch update: {e}")
             
             # [v2.7.3] Apply Right Alignment for Price/Change/Volume in Mgmt Sheet
             try:
@@ -1409,11 +1484,20 @@ class StockDataUpdater:
                 if not self.debug_mode:
                     m_ws.update(values=[row_data], range_name=f'A{cell.row}')
                     print(f"Updated monthly log for {target_date_str} (Row {cell.row})")
+                    # Format Update Date (Column G)
+                    format_cell_range(m_ws, f'G{cell.row}', CellFormat(horizontalAlignment='RIGHT', verticalAlignment='TOP'))
             else:
                 # Append new row
                 if not self.debug_mode:
                     m_ws.append_row(row_data)
                     print(f"Appended new monthly log for {target_date_str}")
+                    # Format the new row (assuming it's the last one)
+                    # Note: Getting last row index might be needed if append_row doesn't return it easily or we want to be safe.
+                    # But typically standard format is applied to the whole sheet or we just format the last row.
+                    # Let's format the entire G column from G2 down just to be sure and consistent, or just the specific cell.
+                    # Given we don't know the row index easily after append without checking, 
+                    # let's just format the whole G column to be safe and simple.
+                    format_cell_range(m_ws, f'G2:G', CellFormat(horizontalAlignment='RIGHT', verticalAlignment='TOP'))
                     
         except Exception as e:
             print(f"Error updating monthly log: {e}")
