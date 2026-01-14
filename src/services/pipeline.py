@@ -185,13 +185,19 @@ class StockPipeline:
         
         # 3. Upsert (Check if date exists)
         try:
-            # Read first column (Dates)
-            dates = ws.col_values(1)
-            if today_str in dates:
+            # cell = ws.find(today_str, in_column=1) # find matches exact string usually
+            # Some gspread versions require in_column, some don't support it well.
+            # Safe way: get all records or find.
+            # Let's try find() which is standard.
+            cell = None
+            try:
+                 cell = ws.find(today_str)
+            except gspread.exceptions.CellNotFound:
+                 cell = None
+            
+            if cell and cell.col == 1:
                 # Update existing row
-                row_idx = dates.index(today_str) + 1 # 1-based index
-                # ws.update(f'A{row_idx}', [row]) # gspread update accepts range and values
-                # Note: gspread behavior varies by version. update(range_name, values) is standard.
+                row_idx = cell.row
                 ws.update(range_name=f'A{row_idx}', values=[row])
                 print(f"Updated existing row {row_idx} in monthly sheet: {ws.title}")
             else:
