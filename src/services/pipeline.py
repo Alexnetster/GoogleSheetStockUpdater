@@ -221,10 +221,11 @@ class StockPipeline:
             change_str = f"{s.change_rate:+}%" if s.change_rate else "0%"
             display_str = f"{s.name}({price_str} / {change_str})"
             
+            # Debug Print for first few items
+            if len(watchlist_items) < 3 and '관심' in cat:
+                 print(f"[DEBUG_FMT] {s.name} -> P:{price_str} C:{change_str} => {display_str}")
+            
             if '관심' in cat: watchlist_items.append(display_str)
-            elif '주요' in cat: major_items.append(display_str)
-            elif '코인' in cat or '가상' in cat or s.asset_type == 'Coin': coin_items.append(display_str)
-            else: watchlist_items.append(display_str) # Default
             elif '주요' in cat: major_items.append(display_str)
             elif '코인' in cat or '가상' in cat or s.asset_type == 'Coin': coin_items.append(display_str)
             else: watchlist_items.append(display_str) # Default
