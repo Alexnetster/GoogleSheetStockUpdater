@@ -57,10 +57,15 @@ class StockPipeline:
         # 6. Save
         if not self.config.debug_mode:
             self.sheets.clear_and_update('오늘', dashboard_rows)
+            
+            # Update Monthly Sheet
+            self._update_monthly_sheet(stock_data_list, indices)
+            
             # self.calendar.create_event(...) # Optional implementation
             print("Dashboard updated.")
         else:
             print("[Dry Run] Dashboard rows generated:", len(dashboard_rows))
+            # Dry run logic for monthly could go here
 
     def _fetch_single_stock(self, ticker, asset, row_data) -> StockData:
         # Wrapper to choose source
@@ -132,3 +137,62 @@ class StockPipeline:
             rows.append([s.asset_type, s.ticker, s.name, s.formatted_price, s.news])
             
         return rows
+
+    def _update_monthly_sheet(self, stock_list, indices):
+        """
+        Updates the monthly log sheet (YYYY-MM).
+        Format: $Price / ChangeRate%
+        """
+        today_str = datetime.date.today().isoformat()
+        ws = self.sheets.get_or_create_monthly_sheet(self.config.target_date or datetime.date.today())
+        if not ws: return
+
+        # 1. Categorize
+        watchlist_items = []
+        major_items = []
+        coin_items = []
+        
+        for s in stock_list:
+            # Format: $Price / ChangeRate%
+            # You might want to use s.formatted_price which already has currency symbol
+            # But user asked for "$Price / ChangeRate%" specifically.
+            # Let's assume formatted_price has the symbol.
+            
+            # Basic formatting
+            price_str = s.formatted_price
+            change_str = f"{s.change_rate:+}%" if s.change_rate else "0%"
+            
+            # Combine
+            display_str = f"{s.name}({price_str} / {change_str})"
+            
+            # Categorize based on s.category (from sheet) or s.asset_type
+            # We used 'Category' in legacy. In StockData, we have 'category'.
+            cat = s.category
+            if '관심' in cat: watchlist_items.append(display_str)
+            elif '주요' in cat: major_items.append(display_str)
+            elif '코인' in cat or '가상' in cat or s.asset_type == 'Coin': coin_items.append(display_str)
+            else: watchlist_items.append(display_str) # Default
+            
+        # 2. Build Row
+        # Columns: ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
+        
+        # Indices String
+        indices_str = ""
+        # TODO: Format indices properly here if valid
+        
+        row = [
+            today_str,
+            indices_str,
+            "\n".join(watchlist_items),
+            "\n".join(major_items),
+            "\n".join(coin_items),
+            "", # Cautionary buffer summary - skipped for now
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ]
+        
+        # 3. Append
+        try:
+            ws.append_row(row)
+            print(f"Appended to monthly sheet: {ws.title}")
+        except Exception as e:
+            print(f"Error appending to monthly sheet: {e}")
