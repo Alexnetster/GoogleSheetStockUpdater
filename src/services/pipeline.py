@@ -65,7 +65,9 @@ class StockPipeline:
             print("Dashboard updated.")
         else:
             print("[Dry Run] Dashboard rows generated:", len(dashboard_rows))
-            # Dry run logic for monthly could go here
+            # Dry run logic for monthly: Call with mock adapter
+            print("[Dry Run] Testing Monthly Sheet Upsert Logic...")
+            self._update_monthly_sheet(stock_data_list, indices)
 
     def _fetch_single_stock(self, ticker, asset, row_data) -> StockData:
         # Wrapper to choose source
@@ -115,8 +117,43 @@ class StockPipeline:
         return None
 
     def _fetch_indices(self):
-        # Placeholder for index fetching
-        return {}
+        """
+        Fetch key market indices using Yahoo Finance.
+        Targets: USD/KRW, KOSPI, S&P 500
+        """
+        indices = {}
+        targets = {
+            'USD/KRW': 'KRW=X',
+            'KOSPI': '^KS11',
+            'S&P 500': '^GSPC'
+        }
+        
+        end = datetime.date.today()
+        start = end - datetime.timedelta(days=7)
+
+        for name, ticker in targets.items():
+            try:
+                hist = yahoo_finance.get_stock_history(ticker, start, end)
+                if not hist.empty:
+                    price = hist['Close'].iloc[-1]
+                    # Calculate change from previous close (simple method)
+                    # Ideally we want previous session close
+                    if len(hist) >= 2:
+                        prev = hist['Close'].iloc[-2]
+                        change = ((price - prev) / prev) * 100
+                    else:
+                        change = 0.0
+                        
+                    indices[name] = {
+                        'price': price,
+                        'change': change,
+                        'fmt_price': f"{price:,.2f}" if 'KRW' not in name else f"{price:,.2f}",
+                        'fmt_change': f"{change:+.2f}%"
+                    }
+            except Exception as e:
+                print(f"Error fetching index {name}: {e}")
+                
+        return indices
 
     def _build_dashboard_rows(self, stock_list, indices):
         # Reconstruct the 'Today' sheet layout
@@ -167,7 +204,18 @@ class StockPipeline:
             
         # 2. Build Row
         # Columns: ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
-        indices_str = "" # TODO: Format indices properly here if valid
+        
+        # Indices String Formatting
+        # Ex: "USD/KRW: 1,405.50 (+0.12%)\nKOSPI: 2,500.00 (-0.50%)"
+        indices_list = []
+        for name, data in indices.items():
+            # Special formatting for Exchange Rate (KRW is usually just price)
+            val_str = f"{name}: {data['fmt_price']} ({data['fmt_change']})"
+            indices_list.append(val_str)
+        indices_str = "\n".join(indices_list)
+
+        # Cautionary Buffer - Placeholder for now
+        cautionary_str = "(System Update: Cautionary logic pending)"
         
         # KST Timestamp
         now_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
@@ -179,7 +227,10 @@ class StockPipeline:
             "\n".join(watchlist_items),
             "\n".join(major_items),
             "\n".join(coin_items),
-            "", # Cautionary buffer
+            "\n".join(watchlist_items),
+            "\n".join(major_items),
+            "\n".join(coin_items),
+            cautionary_str, 
             timestamp_str
         ]
         

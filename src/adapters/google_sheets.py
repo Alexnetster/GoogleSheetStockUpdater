@@ -4,6 +4,31 @@ from datetime import datetime
 from src.utils.auth import get_google_credentials
 from src.domain.models import StockData
 
+class MockCell:
+    def __init__(self, row, col):
+        self.row = row
+        self.col = col
+
+class MockWorksheet:
+    def __init__(self, title):
+        self.title = title
+    
+    def find(self, query, in_column=None):
+        print(f"[Mock] Searching for '{query}' in {self.title}...")
+        # Simulate finding today's date to test AUTH/UPDATE path
+        if "2026-01-14" in query: 
+            return MockCell(5, 1) # Pretend found at row 5
+        return None # Not found
+        
+    def col_values(self, col):
+        return []
+    
+    def update(self, range_name, values):
+        print(f"[Mock] Updating {self.title} range {range_name} with {values}")
+        
+    def append_row(self, values):
+        print(f"[Mock] Appending to {self.title}: {values}")
+
 class GoogleSheetsAdapter:
     def __init__(self, spreadsheet_id: str):
         try:
@@ -52,7 +77,7 @@ class GoogleSheetsAdapter:
     def get_or_create_monthly_sheet(self, target_date):
         if not self.sh:
              print(f"[Mock] Get Monthly Sheet for {target_date}")
-             return None
+             return MockWorksheet(target_date.strftime('%Y-%m'))
         title = target_date.strftime('%Y-%m')
         try:
             return self.sh.worksheet(title)
