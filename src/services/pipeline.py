@@ -142,8 +142,9 @@ class StockPipeline:
         """
         Updates the monthly log sheet (YYYY-MM).
         Format: $Price / ChangeRate%
+        Upsert logic: Updates row if date exists, otherwise appends.
         """
-        today_str = datetime.date.today().isoformat()
+        today_str = (self.config.target_date or datetime.date.today()).isoformat()
         ws = self.sheets.get_or_create_monthly_sheet(self.config.target_date or datetime.date.today())
         if not ws: return
 
@@ -154,19 +155,10 @@ class StockPipeline:
         
         for s in stock_list:
             # Format: $Price / ChangeRate%
-            # You might want to use s.formatted_price which already has currency symbol
-            # But user asked for "$Price / ChangeRate%" specifically.
-            # Let's assume formatted_price has the symbol.
-            
-            # Basic formatting
             price_str = s.formatted_price
             change_str = f"{s.change_rate:+}%" if s.change_rate else "0%"
-            
-            # Combine
             display_str = f"{s.name}({price_str} / {change_str})"
             
-            # Categorize based on s.category (from sheet) or s.asset_type
-            # We used 'Category' in legacy. In StockData, we have 'category'.
             cat = s.category
             if '관심' in cat: watchlist_items.append(display_str)
             elif '주요' in cat: major_items.append(display_str)
@@ -175,10 +167,11 @@ class StockPipeline:
             
         # 2. Build Row
         # Columns: ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
+        indices_str = "" # TODO: Format indices properly here if valid
         
-        # Indices String
-        indices_str = ""
-        # TODO: Format indices properly here if valid
+        # KST Timestamp
+        now_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+        timestamp_str = now_kst.strftime("%Y-%m-%d %H:%M:%S")
         
         row = [
             today_str,
@@ -186,13 +179,24 @@ class StockPipeline:
             "\n".join(watchlist_items),
             "\n".join(major_items),
             "\n".join(coin_items),
-            "", # Cautionary buffer summary - skipped for now
-            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "", # Cautionary buffer
+            timestamp_str
         ]
         
-        # 3. Append
+        # 3. Upsert (Check if date exists)
         try:
-            ws.append_row(row)
-            print(f"Appended to monthly sheet: {ws.title}")
+            # Read first column (Dates)
+            dates = ws.col_values(1)
+            if today_str in dates:
+                # Update existing row
+                row_idx = dates.index(today_str) + 1 # 1-based index
+                # ws.update(f'A{row_idx}', [row]) # gspread update accepts range and values
+                # Note: gspread behavior varies by version. update(range_name, values) is standard.
+                ws.update(range_name=f'A{row_idx}', values=[row])
+                print(f"Updated existing row {row_idx} in monthly sheet: {ws.title}")
+            else:
+                # Append new row
+                ws.append_row(row)
+                print(f"Appended to monthly sheet: {ws.title}")
         except Exception as e:
-            print(f"Error appending to monthly sheet: {e}")
+            print(f"Error updating monthly sheet: {e}")
