@@ -1,0 +1,134 @@
+import os
+import datetime
+from src.domain.models import AppConfig, StockData
+from src.adapters.google_sheets import GoogleSheetsAdapter
+from src.adapters.google_calendar import CalendarAdapter
+from src.adapters import naver_finance, yahoo_finance
+from src.utils import formatters
+
+class StockPipeline:
+    def __init__(self, config: AppConfig):
+        self.config = config
+        self.sheets = GoogleSheetsAdapter(config.spreadsheet_id)
+        self.calendar = CalendarAdapter(config.calendar_id)
+        
+    def run(self):
+        print(f"Starting Pipeline... (Debug: {self.config.debug_mode})")
+        
+        # 1. Load Watchlist
+        # For Phase 2, we simplify: just read '종목_요청' logic if needed, 
+        # but legacy 'process_and_report' mainly updates '오늘' and '종목_관리'.
+        
+        # In legacy, 'get_stock_list' synced Config -> Management.
+        # We will assume Management is up to date or we can port that sync logic later.
+        # For now, let's focus on the 'Update Dashboard' flow.
+        
+        try:
+            mgmt_rows = self.sheets.read_sheet_to_records('종목_관리')
+        except:
+            print("Could not read '종목_관리'. skipping.")
+            mgmt_rows = []
+
+        # 2. Fetch Data (Sequential for now)
+        stock_data_list = []
+        for row in mgmt_rows:
+            try:
+                # Basic parsing from row
+                ticker = str(row.get('티커', '')).strip()
+                asset = row.get('구분', 'KR')
+                if not ticker: continue
+                
+                # Fetch Logic (Delegated)
+                s_data = self._fetch_single_stock(ticker, asset, row)
+                if s_data:
+                    stock_data_list.append(s_data)
+            except Exception as e:
+                print(f"Error processing {row}: {e}")
+                
+        # 3. Fetch Indices
+        indices = self._fetch_indices()
+        
+        # 4. Filter & Organize (Simplified logic from updater.py)
+        # In legacy, it separates into sections.
+        
+        # 5. Build Dashboard Rows
+        dashboard_rows = self._build_dashboard_rows(stock_data_list, indices)
+        
+        # 6. Save
+        if not self.config.debug_mode:
+            self.sheets.clear_and_update('오늘', dashboard_rows)
+            # self.calendar.create_event(...) # Optional implementation
+            print("Dashboard updated.")
+        else:
+            print("[Dry Run] Dashboard rows generated:", len(dashboard_rows))
+
+    def _fetch_single_stock(self, ticker, asset, row_data) -> StockData:
+        # Wrapper to choose source
+        # This is a simplified version of legacy 'get_stock_data' loop
+        try:
+            name = row_data.get('종목명', ticker)
+            
+            if asset == 'KR':
+                # Yahoo for price, Naver for aux? Legacy used Yahoo for price mostly.
+                # Let's use Yahoo for price history (consistent with legacy)
+                end = datetime.date.today()
+                start = end - datetime.timedelta(days=7)
+                hist = yahoo_finance.get_stock_history(ticker + '.KS', start, end)
+                if hist.empty:
+                    hist = yahoo_finance.get_stock_history(ticker + '.KQ', start, end)
+                
+                if not hist.empty:
+                    price = hist['Close'].iloc[-1]
+                    vol = hist['Volume'].iloc[-1]
+                    # Naver News
+                    news = naver_finance.get_latest_news(ticker)
+                    
+                    return StockData(
+                        asset_type='KR', ticker=ticker, name=name,
+                        price=price, change_rate=0.0, # Todo: calc change
+                        volume=vol, market_cap=0, actual_date=end,
+                        formatted_price=formatters.format_price(price, 'KR'),
+                        news=news, category=row_data.get('카테고리', '')
+                    )
+            
+            elif asset == 'US':
+                end = datetime.date.today()
+                start = end - datetime.timedelta(days=7)
+                hist = yahoo_finance.get_stock_history(ticker, start, end)
+                if not hist.empty:
+                    price = hist['Close'].iloc[-1]
+                    return StockData(
+                        asset_type='US', ticker=ticker, name=name,
+                        price=price, change_rate=0.0, volume=0,
+                        market_cap=0, actual_date=end,
+                        formatted_price=formatters.format_price(price, 'US'),
+                        category=row_data.get('카테고리', '')
+                    )
+
+        except Exception as e:
+            print(f"Fetch failed for {ticker}: {e}")
+        return None
+
+    def _fetch_indices(self):
+        # Placeholder for index fetching
+        return {}
+
+    def _build_dashboard_rows(self, stock_list, indices):
+        # Reconstruct the 'Today' sheet layout
+        rows = []
+        rows.append(['=== 2026 Stock Dashboard ==='])
+        rows.append(['Date', datetime.datetime.now().isoformat()])
+        rows.append([])
+        
+        # Indices
+        rows.append(['[Indices]'])
+        # ... Add indices logic
+        rows.append([])
+
+        # Stocks
+        rows.append(['[Stocks]'])
+        rows.append(['Asset', 'Ticker', 'Name', 'Price', 'News'])
+        for s in stock_list:
+            rows.append([s.asset_type, s.ticker, s.name, s.formatted_price, s.news])
+            
+        return rows
