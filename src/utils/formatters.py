@@ -44,6 +44,12 @@ def normalize_ticker(ticker, asset_type):
     US: Upper case
     """
     t = str(ticker).strip()
+    # Handle float strings like '5930.0'
+    if t.replace('.', '', 1).isdigit():
+         try:
+             t = str(int(float(t)))
+         except: pass
+
     if asset_type == 'KR' and t.isdigit():
         return t.zfill(6)
     return t.upper() if asset_type == 'US' else t

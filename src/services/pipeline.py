@@ -34,9 +34,12 @@ class StockPipeline:
         for row in mgmt_rows:
             try:
                 # Basic parsing from row
-                ticker = str(row.get('티커', '')).strip()
+                ticker_raw = str(row.get('티커', '')).strip()
                 asset = row.get('구분', 'KR')
-                if not ticker: continue
+                if not ticker_raw: continue
+                
+                # Normalize Ticker (Important for KR stocks: 5930 -> 005930)
+                ticker = formatters.normalize_ticker(ticker_raw, asset)
                 
                 # Fetch Logic (Delegated)
                 s_data = self._fetch_single_stock(ticker, asset, row)
@@ -87,12 +90,20 @@ class StockPipeline:
                 if not hist.empty:
                     price = hist['Close'].iloc[-1]
                     vol = hist['Volume'].iloc[-1]
+                    
+                    # Calculate Change Rate
+                    change_rate = 0.0
+                    if len(hist) >= 2:
+                        prev_close = hist['Close'].iloc[-2]
+                        if prev_close > 0:
+                            change_rate = ((price - prev_close) / prev_close) * 100
+                            
                     # Naver News
                     news = naver_finance.get_latest_news(ticker)
                     
                     return StockData(
                         asset_type='KR', ticker=ticker, name=name,
-                        price=price, change_rate=0.0, # Todo: calc change
+                        price=price, change_rate=round(change_rate, 2),
                         volume=vol, market_cap=0, actual_date=end,
                         formatted_price=formatters.format_price(price, 'KR'),
                         news=news, category=row_data.get('카테고리', '')
@@ -104,9 +115,17 @@ class StockPipeline:
                 hist = yahoo_finance.get_stock_history(ticker, start, end)
                 if not hist.empty:
                     price = hist['Close'].iloc[-1]
+                    
+                    # Calculate Change Rate
+                    change_rate = 0.0
+                    if len(hist) >= 2:
+                        prev_close = hist['Close'].iloc[-2]
+                        if prev_close > 0:
+                            change_rate = ((price - prev_close) / prev_close) * 100
+
                     return StockData(
                         asset_type='US', ticker=ticker, name=name,
-                        price=price, change_rate=0.0, volume=0,
+                        price=price, change_rate=round(change_rate, 2), volume=0,
                         market_cap=0, actual_date=end,
                         formatted_price=formatters.format_price(price, 'US'),
                         category=row_data.get('카테고리', '')
@@ -191,13 +210,21 @@ class StockPipeline:
         coin_items = []
         
         for s in stock_list:
+            # Use Category to filter out Indices/Exchange rates if they are in the list
+            # We already fetch indices separately in _fetch_indices()
+            cat = s.category
+            if '지수' in cat or '환율' in cat:
+                continue
+
             # Format: $Price / ChangeRate%
             price_str = s.formatted_price
             change_str = f"{s.change_rate:+}%" if s.change_rate else "0%"
             display_str = f"{s.name}({price_str} / {change_str})"
             
-            cat = s.category
             if '관심' in cat: watchlist_items.append(display_str)
+            elif '주요' in cat: major_items.append(display_str)
+            elif '코인' in cat or '가상' in cat or s.asset_type == 'Coin': coin_items.append(display_str)
+            else: watchlist_items.append(display_str) # Default
             elif '주요' in cat: major_items.append(display_str)
             elif '코인' in cat or '가상' in cat or s.asset_type == 'Coin': coin_items.append(display_str)
             else: watchlist_items.append(display_str) # Default
@@ -212,7 +239,11 @@ class StockPipeline:
             # Special formatting for Exchange Rate (KRW is usually just price)
             val_str = f"{name}: {data['fmt_price']} ({data['fmt_change']})"
             indices_list.append(val_str)
-        indices_str = "\n".join(indices_list)
+        
+        if not indices_list:
+            indices_str = ""
+        else:
+            indices_str = "\n".join(indices_list)
 
         # Cautionary Buffer - Placeholder for now
         cautionary_str = "(System Update: Cautionary logic pending)"
@@ -224,9 +255,6 @@ class StockPipeline:
         row = [
             today_str,
             indices_str,
-            "\n".join(watchlist_items),
-            "\n".join(major_items),
-            "\n".join(coin_items),
             "\n".join(watchlist_items),
             "\n".join(major_items),
             "\n".join(coin_items),
