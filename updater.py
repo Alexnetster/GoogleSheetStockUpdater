@@ -33,7 +33,7 @@ except ImportError:
 
 # --- 설정 및 상수 ---
 APP_NAME = "DailyStockUpdater"
-VERSION = "v2.7.0_20260111"
+VERSION = "v2.7.7_20260115"
 
 # 주의종목 기준 (자체 분석용 - 완화된 기준)
 UNUSUAL_CHANGE_RATE = 10.0  # 변동률 기준 (%)
@@ -1499,7 +1499,12 @@ class StockDataUpdater:
                 cell = m_ws.find(target_date_str, in_column=1)
             except: pass
             
-            now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            # [modified] KST Timestamp for clearer logging
+            # GitHub Actions runs in UTC. Add 9 hours for KST.
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            now_kst = now_utc + datetime.timedelta(hours=9)
+            now_str = now_kst.strftime('%Y-%m-%d %H:%M:%S')
+            
             row_data = [
                 target_date_str,   # A: 날짜
                 final_idx_text,    # B: 지수/환율
