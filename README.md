@@ -104,7 +104,21 @@ graph TD
 
 3. **실행**:
    ```bash
-   python updater.py
+   python updater.py [options]
+   ```
+
+   **커맨드 라인 옵션 (Command Line Arguments):**
+   - `--date YYYY-MM-DD`: 특정 과거 날짜 기준으로 실행합니다. (입력하지 않으면 오늘 날짜)
+   - `--mode [MODE]`: 실행 모드를 강제로 지정합니다. 매개변수: `AUTO` (기본값), `MORNING`, `MIDDAY`, `CLOSE`, `EVENING`
+   - `--debug`: 디버그 모드로 실행합니다. (구글 시트/캘린더에 실제로 쓰지 않고 로그만 출력)
+
+   **사용 예시:**
+   ```bash
+   # 과거 데이터(2025-12-25) 기준으로 마감(CLOSE) 리포트 다시 작성
+   python updater.py --date 2025-12-25 --mode CLOSE
+
+   # 디버깅 모드로 테스트 실행 (기록 안됨)
+   python updater.py --debug
    ```
 
 > ⚠️ **주의**: 로컬 실행은 개발/테스트 용도이며, 실제 운영은 GitHub Actions에서 자동으로 처리됩니다.

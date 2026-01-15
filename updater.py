@@ -234,7 +234,7 @@ class StockDataUpdater:
                 price = curr['Close']
                 change_rate = ((price - prev['Close']) / prev['Close']) * 100
                 
-                name = stock.info.get('longName') or stock.info.get('shortName') or ticker
+                name = stock.info.get('shortName') or stock.info.get('longName') or ticker
                 if asset_type == 'KR': name = self.kr_name_map.get(ticker, name)
 
                 # 테마 및 정보 링크 수집
