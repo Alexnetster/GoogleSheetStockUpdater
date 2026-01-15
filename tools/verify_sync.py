@@ -68,12 +68,14 @@ class StockDataVerifier(StockDataUpdater):
             orig_get_watch = self.get_stock_list
             def mocked_get_stock_list():
                 print("   [MOCK] Providing dummy watchlist data. (Use --real-watchlist to fetch actual)")
-                return [
-                    {'Asset': 'KR', 'Ticker': '005930', 'Name': '삼성전자', 'Category': '주요종목', '메모': '삼성 반등 기원', '전문가의견': '매수', 'RequestEnabled': 'TRUE'},
-                    {'Asset': 'US', 'Ticker': 'AAPL', 'Name': 'Apple Inc.', 'Category': '주요종목', 'Memo': '아이폰 호재', 'RequestEnabled': 'TRUE'},
-                    {'Asset': 'KR', 'Ticker': '000660', 'Name': 'SK하이닉스', 'Category': '관심종목', 'Recommendation': 'Buy', 'RequestEnabled': 'TRUE'},
-                    {'Asset': 'Coin', 'Ticker': 'BTC', 'Name': 'Bitcoin', 'Category': '가상화폐', 'RequestEnabled': 'TRUE'}
+                data = [
+                    {'Asset': 'KR', 'Ticker': '005930', 'Name': '삼성전자', 'Category': '주요종목', '메모': '삼성 반등 기원', '전문가의견': '매수', '시스템추천': '강력매수', '알림가': '80000', 'RequestEnabled': 'TRUE'},
+                    {'Asset': 'US', 'Ticker': 'AAPL', 'Name': 'Apple Inc.', 'Category': '주요종목', 'Memo': '아이폰 호재', '전문가의견': 'BUY', '시스템추천': 'BUY', '알림가': '200', 'RequestEnabled': 'TRUE'},
+                    {'Asset': 'KR', 'Ticker': '000660', 'Name': 'SK하이닉스', 'Category': '관심종목', 'Memo': '반도체 사이클', '전문가의견': 'HOLD', '시스템추천': 'HOLD', '알림가': '150000', 'RequestEnabled': 'TRUE'},
+                    {'Asset': 'Coin', 'Ticker': 'BTC', 'Name': 'Bitcoin', 'Category': '가상화폐', 'Memo': '디지털 금', '전문가의견': '-', '시스템추천': '-', '알림가': '-', 'RequestEnabled': 'TRUE'}
                 ]
+                self.watchlist = data # [Crucial Fix] Save for get_stock_data to use
+                return data
             self.get_stock_list = mocked_get_stock_list
         else:
             print("   [INFO] Using REAL Watchlist data (Read-Only Mode).")
@@ -97,19 +99,33 @@ class StockDataVerifier(StockDataUpdater):
         def mocked_get_stock_data(tickers, asset_type):
             res = []
             for t in tickers:
-                # Find category from self.watchlist (created in get_stock_list)
-                category = "관심종목" # Default
+                # Find category and other info from self.watchlist
+                category = "관심종목"
+                memo = ""
+                sys_rec = "-"
+                expert_op = "-"
+                alert_price = "-"
+                
                 if hasattr(self, 'watchlist'):
                     for item in self.watchlist:
                         if str(item.get('Ticker')) == str(t):
                              category = item.get('Category', '관심종목')
+                             memo = item.get('Memo', item.get('메모', ''))
+                             sys_rec = item.get('시스템추천', item.get('SystemRecommendation', '-'))
+                             expert_op = item.get('전문가의견', item.get('ExpertOpinion', '-'))
+                             alert_price = item.get('알림가', item.get('AlertPrice', '-'))
                              break
                 
                 res.append({
                     'Asset': asset_type, 'Ticker': t, 'Name': f"Mock_{t}", 
                     'Price': 100.0, 'FormattedPrice': '100.0', 'ChangeRate': 1.5, 
-                    'Volume': 1000000, 'MarketCap': 1000000000, 'Recommendation': 'HOLD',
+                    'Volume': 1000000, 'MarketCap': 1000000000, 
+                    'FinalRecommendation': 'HOLD', # Simulator fixed value
                     'Category': category,
+                    'Memo': memo,
+                    '시스템추천': sys_rec,
+                    '전문가의견': expert_op,
+                    '알림가': alert_price,
                     'ActualDate': self.target_date.isoformat()
                 })
             return res
@@ -197,42 +213,14 @@ def main():
         # * 임시 방편: verifier 인스턴스로 필요한 메소드들을 순차 호출 *
         
         # 1. 시세 수집
-        print("\n1. Fetching Market Data...")
-        # get_stock_list -> get_stock_data -> get_market_indices
-        requests_list = verifier.get_stock_list() # This mocks watchlist request
-        verifier.watchlist = requests_list # [Fix] Set instance variable for categorization logic
+        # [Modified] Use process_and_report to verify Full Pipeline including Monthly Sheet
+        print("\n=== Running Full Pipeline Verification (via process_and_report) ===")
+        # Note: process_and_report calls get_stock_list, get_stock_data, get_market_indices internally.
+        # These methods are overridden in StockDataVerifier to provide mock data.
         
-        # requests_list에서 티커/자산 추출
-        tickers_kr = [r['Ticker'] for r in requests_list if r.get('Asset') == 'KR']
-        tickers_us = [r['Ticker'] for r in requests_list if r.get('Asset') == 'US']
-        tickers_coin = [r['Ticker'] for r in requests_list if r.get('Asset') == 'Coin']
+        verifier.process_and_report(mode=args.mode, manual_date=bool(args.date))
         
-        kr_data = verifier.get_stock_data(tickers_kr, 'KR')
-        us_data = verifier.get_stock_data(tickers_us, 'US')
-        coin_data = verifier.get_stock_data(tickers_coin, 'Coin')
-        all_data = kr_data + us_data + coin_data
-        
-        indices = verifier.get_market_indices()
-        
-        # 2. 오늘 시트 갱신 (가상)
-        print("\n2. Updating Today Sheet (Mock)...")
-        verifier.update_today_data(all_data, indices, is_kr_open=True, is_us_open=True, mode=args.mode)
-        
-        # 3. 월별 시트 갱신 (가상 - updater.py에는 분리된 함수로 존재하지 않고 로직 파편화 가능성 있음)
-        # -> updater.py의 구조상 update_monthly_sheet 같은 퍼블릭 메소드가 없어서 직접 호출 불가할 수 있음.
-        #    StockDataUpdater에는 manage_cautionary_buffer만 보임.
-        #    Monthly Update 로직은 updater.py의 main()이나 다른 곳에 있을 가능성.
-        #    하지만 verify_sync.py 원본 코드에는 process_and_report 호출이 있었는데...
-        #    아, 원본 verify_sync.py 142라인: verifier.process_and_report(mode=args.mode, manual_date=True)
-        #    StockDataUpdater에는 process_and_report가 없음! (updater.py 확인 필요)
-        #    (Task 85 view_file 결과를 보면 updater.py에는 process_and_report가 없음. main() 블록만 있음)
-        #    => verify_sync.py 원본 코드가 동작하지 않았을 가능성이 큼. 
-        #    => 따라서 위처럼 수동 순차 호출이 맞음.
-        
-        # 월별 업데이트는 현재 updater.py에 _update_monthly_sheet 함수가 안보이고 process_and_report도 안보이므로 스킵.
-        # 대신 manage_cautionary_buffer는 테스트 가능.
-        print("\n3. Managing Cautionary Buffer...")
-        verifier.manage_cautionary_buffer([])
+        # Manual steps 1, 2, 3 removed as they are covered by process_and_report
 
         elapsed = time.time() - start_time
         print(f"\n✅ Execution Finished in {elapsed:.2f}s")

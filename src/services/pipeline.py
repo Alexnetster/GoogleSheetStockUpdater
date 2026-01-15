@@ -106,7 +106,10 @@ class StockPipeline:
                         price=price, change_rate=round(change_rate, 2),
                         volume=vol, market_cap=0, actual_date=end,
                         formatted_price=formatters.format_price(price, 'KR'),
-                        news=news, category=row_data.get('카테고리', '')
+                        news=news, category=row_data.get('카테고리', ''),
+                        recommendation=row_data.get('시스템추천', '-'),
+                        expert_opinion=row_data.get('전문가의견', '-'),
+                        alert_price=row_data.get('알림가', '-')
                     )
             
             elif asset == 'US':
@@ -128,7 +131,10 @@ class StockPipeline:
                         price=price, change_rate=round(change_rate, 2), volume=0,
                         market_cap=0, actual_date=end,
                         formatted_price=formatters.format_price(price, 'US'),
-                        category=row_data.get('카테고리', '')
+                        category=row_data.get('카테고리', ''),
+                        recommendation=row_data.get('시스템추천', '-'),
+                        expert_opinion=row_data.get('전문가의견', '-'),
+                        alert_price=row_data.get('알림가', '-')
                     )
 
         except Exception as e:
@@ -216,14 +222,21 @@ class StockPipeline:
             if '지수' in cat or '환율' in cat:
                 continue
 
-            # Format: $Price / ChangeRate%
+            # Format: Ticker / Name / $Price / Change% / Recommendation / TargetPrice (AlertPrice) / InfoSource
+            # Example: AAPL / Apple Inc. / $150.0 / +1.2% / BUY / 목표가 $145 / 네이버증권
             price_str = s.formatted_price
             change_str = f"{s.change_rate:+}%" if s.change_rate else "0%"
-            display_str = f"{s.name}({price_str} / {change_str})"
+            rec_str = s.recommendation if s.recommendation else "-"
+            target_str = f"목표가 {s.alert_price}" if s.alert_price and s.alert_price != '-' else "-"
+            
+            source = "네이버증권" if s.asset_type == 'KR' else "Yahoo Finance"
+            
+            # Construct display string
+            display_str = f"{s.ticker} / {s.name} / {price_str} / {change_str} / {rec_str} / {target_str} / {source}"
             
             # Debug Print for first few items
             if len(watchlist_items) < 3 and '관심' in cat:
-                 print(f"[DEBUG_FMT] {s.name} -> P:{price_str} C:{change_str} => {display_str}")
+                 print(f"[DEBUG_FMT] {s.name} -> {display_str}")
             
             if '관심' in cat: watchlist_items.append(display_str)
             elif '주요' in cat: major_items.append(display_str)
@@ -254,20 +267,20 @@ class StockPipeline:
             buffer_rows = self.sheets.read_sheet_to_records('주의종목_버퍼')
             
             # Filter for today/target_date if needed, but buffer is usually daily cleared
-            # formatting: "Name(Change%, Source)"
             for row in buffer_rows:
-                # Basic validation
                 if not row.get('종목명') or not row.get('변동률'): continue
                 
+                ticker = row.get('티커', '-')
                 name = row['종목명']
+                price = row.get('현재가', '-')
                 change = row['변동률']
                 source = row.get('출처', 'Unknown')
                 
-                # change might be string or float
                 change_str = f"{change}%" if isinstance(change, (int, float)) else str(change)
                 if '%' not in change_str: change_str += '%'
                 
-                item_str = f"{name}({change_str}, {source})"
+                # Format: Ticker / Name / Price / Change / Rec / Target / Source
+                item_str = f"{ticker} / {name} / {price} / {change_str} / - / - / {source}"
                 cautionary_items.append(item_str)
                 
             if cautionary_items:

@@ -1381,9 +1381,31 @@ class StockDataUpdater:
         def format_item_list(items):
             lines = []
             for d in items:
-                line = f"[{d.get('Ticker','-')}] {d.get('Name','-')} ({d.get('ChangeRate',0):+.2f}%)"
-                if d.get('FinalRecommendation', '-') not in ['-', '']:
-                    line += f" [{d.get('FinalRecommendation')}]"
+                # Format: Ticker / Name / $Price / Change% / Recommendation / TargetPrice (AlertPrice) / InfoSource
+                ticker = d.get('Ticker', '-')
+                name = d.get('Name', '-')
+                price_str = d.get('FormattedPrice', '-')
+                
+                try:
+                    c_val = float(d.get('ChangeRate', 0))
+                    change_str = f"{c_val:+.2f}%"
+                except:
+                    change_str = str(d.get('ChangeRate', '0%'))
+
+                rec = d.get('FinalRecommendation', '-')
+                if rec in ['-', '']:
+                     rec = d.get('시스템추천', d.get('SystemRecommendation', '-'))
+                
+                alert_val = d.get('알림가', '-')
+                target_str = f"목표가 {alert_val}" if alert_val and str(alert_val) not in ['-', '', '0'] else "-"
+                
+                # InfoSource
+                asset = d.get('Asset', '')
+                source = "네이버증권" if asset == 'KR' else "Yahoo Finance"
+                
+                # Construct Line
+                # AAPL / Apple Inc. / $150.0 / +1.2% / BUY / 목표가 $145 / 네이버증권
+                line = f"{ticker} / {name} / {price_str} / {change_str} / {rec} / {target_str} / {source}"
                 lines.append(line)
             return "\n".join(lines)
 
@@ -1395,8 +1417,20 @@ class StockDataUpdater:
         caution_lines = []
         if unusual:
             for d in unusual:
-                tag = f"[{d.get('Source', '주의')}]" if d.get('Source') != 'Internal' else "[급변]"
-                line = f"{tag} {d.get('Name','-')} ({d.get('ChangeRate',0):+.2f}%)"
+                # Format: Ticker / Name / Price / Change / Rec / Target / InfoSource
+                ticker = d.get('Ticker', '-')
+                name = d.get('Name', '-')
+                price = d.get('FormattedPrice', '-')
+                try:
+                    c_val = float(d.get('ChangeRate', 0))
+                    chg = f"{c_val:+.2f}%"
+                except: chg = str(d.get('ChangeRate', '0%'))
+                
+                src = d.get('Source', '주의')
+                if src == 'Internal': src = '자체분석'
+                
+                # Cautionary items usually lack Rec/Target, so use '-'
+                line = f"{ticker} / {name} / {price} / {chg} / - / - / {src}"
                 caution_lines.append(line)
         text_cautionary = "\n".join(caution_lines)
 

@@ -21,6 +21,7 @@ class StockData:
     news: str = "-"
     recommendation: str = "-"
     expert_opinion: str = "-"
+    alert_price: str = "-"
     category: str = "" # 'Major', 'Watchlist', etc.
 
     def to_dict(self) -> Dict:
