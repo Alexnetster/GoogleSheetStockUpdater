@@ -57,7 +57,7 @@ Google Spreadsheet 및 Calendar API를 연동하여 자산별(국장, 미장, �
 ## 자동화 스케줄링 (GitHub Actions)
 - **데일리 동기화(KST 기준)**:
     - `08:00`: 미장 마감 체크 (CLOSE)
-    - `09:10`: 모닝 브리핑 / 장 시작 알림 (MORNING)
+    - `09:20`: 모닝 브리핑 / 장 시작 알림 (MORNING)
     - `12:00`: 국장 오전 세션 (MIDDAY)
     - `16:00`: 국장 마감 (CLOSE)
     - `20:00`: 이브닝 / 미장 프리마켓 (EVENING)

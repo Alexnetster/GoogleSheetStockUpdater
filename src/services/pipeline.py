@@ -246,8 +246,37 @@ class StockPipeline:
         else:
             indices_str = "\n".join(indices_list)
 
-        # Cautionary Buffer - Placeholder for now
-        cautionary_str = "(System Update: Cautionary logic pending)"
+        # Cautionary Buffer - Real Data Fetching
+        try:
+            cautionary_items = []
+            # '주의종목_버퍼' sheet name might vary, but assuming standard name
+            # Ideally this should be passed in, but fetching here for self-containment
+            buffer_rows = self.sheets.read_sheet_to_records('주의종목_버퍼')
+            
+            # Filter for today/target_date if needed, but buffer is usually daily cleared
+            # formatting: "Name(Change%, Source)"
+            for row in buffer_rows:
+                # Basic validation
+                if not row.get('종목명') or not row.get('변동률'): continue
+                
+                name = row['종목명']
+                change = row['변동률']
+                source = row.get('출처', 'Unknown')
+                
+                # change might be string or float
+                change_str = f"{change}%" if isinstance(change, (int, float)) else str(change)
+                if '%' not in change_str: change_str += '%'
+                
+                item_str = f"{name}({change_str}, {source})"
+                cautionary_items.append(item_str)
+                
+            if cautionary_items:
+                cautionary_str = "\n".join(cautionary_items)
+            else:
+                cautionary_str = "-"
+        except Exception as e:
+            print(f"Error fetching cautionary buffer: {e}")
+            cautionary_str = "Error fetching data"
         
         # KST Timestamp
         now_kst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))

@@ -1,5 +1,32 @@
 # 📊 Google Sheet Stock Updater
 
+> [!NOTE]
+> **AI Requirements**:
+> - **Environment**: PowerShell 5.1, GitHub Actions, Google Sheets/Calendar.
+> - **Testing**: Unit/Performance tests required, with JSON log verification.
+> - **Recovery**: uses `tools\initialize_sheet.py`.
+> - **Verification**: uses `tools\verify_sync.py`.
+
+### 🧪 테스트 및 검증 (Testing & Verification)
+
+이 프로젝트는 안정성을 위해 단계별 자동화 테스트를 제공합니다.
+
+1.  **단위 테스트 (Unit Tests)**: 기본 모듈 동작 검증
+    ```powershell
+    python -m unittest tests/unit/test_verifier.py
+    ```
+
+2.  **성능 테스트 (Performance Test)**: 데이터 파이프라인 속도 측정 (목표: <2초 (Mock))
+    ```powershell
+    python -m unittest tests/performance/benchmark.py
+    ```
+
+3.  **통합 검증 (Integration Verification)**: 로컬 데이터 생성 검증 (Dry-Run)
+    ```powershell
+    # 로그 생성 및 자동 검증 수행
+    python tools/verify_sync.py --mode AUTO --validate
+    ```
+
 자동화된 주식/코인 시장 데이터 수집 및 구글 시트/캘린더 연동 시스템
 
 ## 🎯 주요 기능
@@ -17,6 +44,8 @@
   - v2.6.4: 기록 기준 날짜 최적화 (시장 데이터 날짜 대신 실제 실행일 기준 기록)
   - v2.6.3: initialize_sheet.py 경고 제거 및 오늘 탭 검증 로직 최적화
   - v2.6.2: 월별 탭 '버전' 컬럼을 '갱신날짜'로 변경 (타임스탬프 기록)
+  - v2.4.4: 헤더 전면 한글화, 테마 자동 수집, 정보 링크(주달/야후) 추가, 관리 시트 구조 개선
+  - v1.4.0: 주말/휴장일 자동 감지, 코인 데이터 수집, 캘린더 이벤트 주말 전용 형식, 표 중복 제거
 
 - **동적 종목 관리**: `종목_요청` 시트를 통한 간편한 종목 추가/삭제 및 카테고리 분류
 - **스마트 스키마**: `종목_관리` 시트에 주가 정보(현재가/변동률/거래량) 자동 추가 및 동기화
@@ -86,8 +115,6 @@ graph TD
 
 ### 필수 설정 항목
 
-1. **Google Cloud 서비스 계정** 생성 및 JSON 키 다운로드
-2. **Google Sheets** 공유 (서비스 계정 이메일로)
 1.  **Google Cloud 서비스 계정** 생성 및 JSON 키 다운로드
 2.  **Google Sheets** 공유 (서비스 계정 이메일로)
 3.  **Google Calendar** 공유 (서비스 계정 이메일로)
@@ -96,8 +123,29 @@ graph TD
     - `SPREADSHEET_ID`: 구글 시트 ID
     - `CALENDAR_ID`: 구글 캘린더 ID
 
-### 1. 오늘 (Dashboard Mode)
+## 📑 시트 데이터 구조 (Data Structure)
+
+이 프로젝트는 3가지 핵심 시트(탭)를 기반으로 동작합니다.
+
+### 1. 종목_요청 (Request Layer)
+사용자가 종목을 추가, 삭제, 수정 요청하는 **Start Point**입니다.
+- **역할**: 이 탭에 티커와 정보를 입력하면, 시스템이 유효성을 검증하고 `종목_관리` 탭으로 동기화합니다.
+- **필수 컬럼**: `자산`(KR/US/Coin), `티커`, `종목명`, `카테고리`(주요/관심), `RequestEnabled`(TRUE/FALSE)
+
+### 2. 종목_관리 (DB 레이어)
+시스템이 실시간 가격과 추천 정보를 자동으로 업데이트하는 핵심 DB 영역입니다.
+- **컬럼**: `구분`, `카테고리`, `티커`, `종목명`, `테마`, `메모`, `알림가`, `시스템추천`, `전문가의견`, `정보링크`
+- **자동 업데이트**: `테마`, `시스템추천`, `정보링크` (네이버/야후/주달 연동)
+
+### 3. 주의종목_버퍼 (Buffer Layer)
+장중 발생하는 특이 종목 데이터를 하루 동안 임시 저장하여 누락을 방지하는 휘발성 버퍼입니다.
+- **역할**: 상한가, 거래량 급증 등의 이벤트 종목을 실시간으로 수집 및 누적.
+- **컬럼**: `날짜`, `자산`, `티커`, `종목명`, `현재가`, `변동률`, `거래량`, `출처`(상한가/거래량급증/외인매수 등)
+- **초기화**: 자정(00시) 기준 혹은 세션 시작 시 자동 초기화.
+
+### 4. 오늘 (Dashboard Mode)
 매 실행 시마다 화면을 **초기화하고 새로 작성**하여, 언제 접속하든 가장 최신의 시장 현황을 한눈에 볼 수 있습니다.
+
 | 섹션 | 설명 |
 | :--- | :--- |
 | **Market Indices** | 주요 지수(KOSPI, S&P500 등) 및 환율 현황 |
@@ -106,14 +154,10 @@ graph TD
 | **Crypto** | 비트코인 등 24시간 자산 시세 |
 | **Cautionary** | `주의종목_버퍼`에서 가져온 금일 누적 특이 종목 리스트 |
 
-### 2. 종목_관리 (DB 레이어)
-시스템이 실시간 가격과 추천 정보를 자동으로 업데이트하는 핵심 DB 영역입니다.
-- **컬럼**: `구분`, `카테고리`, `티커`, `종목명`, `테마`, `메모`, `알림가`, `시스템추천`, `전문가의견`, `정보링크`
-- **자동 업데이트**: `테마`, `시스템추천`, `정보링크` (네이버/야후/주달 연동)
-
-### 3. 월별 일지 (History Archive)
+### 5. 월별 일지 (History Archive)
 매월 `YYYY-MM` 형식의 탭이 자동 생성되며, 7개 컬럼으로 세분화된 투자 기록을 남깁니다.
 - **컬럼 구조**: `날짜`, `지수/환율`, `관심종목`, `주요종목`, `코인`, `주의종목`, `갱신날짜`
+- **데이터 포맷**: `티커 / $현재가 / 변동률% / 시스템추천 / 목표가 $알림가` (예: `AAPL / $150.0 / +1.2% / BUY / 목표가 $145`)
 - **보존 정책**: '주의종목'은 하루 동안 발생한 모든 특이사항을 누적하여 기록합니다.
 
 ## 🔄 자동 실행 및 운영 방침 (Operational Policy)
@@ -127,31 +171,52 @@ graph TD
 5.  **캘린더 연동**: 실시간 데이터를 바탕으로 구글 캘린더에 투자일지(섹션별 요약) 자동 생성
 6.  **월별 기록**: 7-Column 구조로 세분화된 데이터를 월별 탭(YYYY-MM)에 누적 기록
 
-### 자동 실행 스케줄
+### ⚙️ GitHub Actions 자동 실행 스케줄 (Automated Schedule)
 
+`.github/workflows/daily_sync.yml`에 정의된 Cron 스케줄에 따라 한국 시간(KST) 기준으로 하루 4회 자동 실행됩니다.
 
-GitHub Actions는 다음 시간에 자동 실행됩니다 (한국 시간 기준):
+| KST (한국시간) | UTC (협정세계시) | Cron Expression | 모드 (Mode) | 설명 (Description) |
+| :--- | :--- | :--- | :--- | :--- |
+| **09:20** | 00:20 | `20 0 * * *` | `MORNING` | 장 시작 전 모닝 브리핑 / NXT 한주 소식 |
+| **12:01** | 03:01 | `1 3 * * *` | `MIDDAY` | 국장 오전 세션 점검 |
+| **16:00** | 07:00 | `0 7 * * *` | `CLOSE` | 국장 정규장 마감 및 데이터 업데이트 |
+| **20:01** | 11:01 | `1 11 * * *` | `EVENING` | NXT 및 전체 마감 / 이브닝 브리핑 |
 
-- **오전 08:01**: 미장 마감 및 NXT 시작 (전일 미장 최종 결과가 오늘 일지에 오전 브리핑으로 병합)
-- **오후 12:01**: 국장 오전 세션 점검 (미드데이 브리핑)
-- **오후 16:00**: 국장 정규장 마감 (국장 정규 세션 데이터 업데이트)
-- **오후 20:01**: NXT 마감 및 이브닝 브리핑 (NXT 결과 및 미장 프리마켓 정보 업데이트)
+> **참고**: `workflow_dispatch` 이벤트를 통해 수동으로 실행할 수 있으며, 이때 `target_date`를 입력하여 과거 데이터를 처리할 수 있습니다. 입력이 없으면 `AUTO` 모드로 동작합니다.
 
-> 스케줄 변경: `.github/workflows/daily_sync.yml` 파일의 `cron` 설정 수정
+## 📚 문서 목록 (Document Index)
 
-## 📁 프로젝트 구조
+이 프로젝트의 모든 문서는 아래에서 바로 접근할 수 있습니다.
+
+- **📄 [README.md](README.md)**: 메인 문서 및 작업 로드맵
+- **📘 [setup_guide.md](docs/setup_guide.md)**: 환경 설정 및 설치 가이드
+- **📗 [walkthrough.md](docs/walkthrough.md)**: 기능 상세 설명 및 로컬 검증 가이드
+- **� [technical_spec.md](docs/technical_spec.md)**: 기술 명세 및 시스템 아키텍처
+- **🛠️ [initialize_sheet.py](tools/initialize_sheet.py)**: 시트 복구 및 초기화 도구
+- **✅ [verify_sync.py](tools/verify_sync.py)**: 데이터 적재 검증 및 로그 생성 도구
+- **📝 [task_log_recent.md](docs/task_log_recent.md)**: 최근 작업 완료 내역 (Archived Task Log)
+
+## �📁 프로젝트 구조 (Project Structure)
 
 ```
 GoogleSheetStockUpdater/
-├── updater.py              # 메인 프로그램
+├── updater.py              # 메인 프로그램 (Entry Point)
 ├── requirements.txt        # Python 의존성
+├── .env                    # 환경변수 (Secrets)
 ├── .github/
 │   └── workflows/
 │       └── daily_sync.yml  # GitHub Actions 워크플로우
-└── docs/
-    ├── setup_guide.md      # 설정 가이드
-    ├── walkthrough.md      # 기능 설명
-    └── technical_spec.md   # 기술 사양
+├── src/                    # 소스 코드 (Core Logic)
+│   ├── adapters/           # 외부 API 연동 (Google Sheets, Calendar)
+│   ├── services/           # 비즈니스 로직 (Pipeline)
+│   └── utils/              # 유틸리티 함수
+├── tools/                  # 유지보수 및 검증 도구
+│   ├── initialize_sheet.py # 시트 할당/헤더 복구
+│   └── verify_sync.py      # 로컬 데이터 검증
+└── docs/                   # 프로젝트 문서
+    ├── setup_guide.md
+    ├── walkthrough.md
+    └── technical_spec.md
 ```
 
 ## 🛠️ 기술 스택
@@ -218,24 +283,7 @@ python tools/initialize_sheet.py --reset
 - **제목 형식**: `투자일지 📈 KOSPI +0.75%` (날짜 제거, 중요 정보 우선)
 - **중복 방지**: 같은 날짜에 실행 시 기존 투자일지를 자동 삭제하고 최신 정보로 갱신하여 캘린더를 깨끗하게 유지합니다.
 
-## 📝 버전 히스토리
 
-- **v2.4.4** (2026-01-11) [LATEST]:
-  - **헤더 전면 한글화**: `티커`, `종목명`, `사용여부` 등 모든 컬럼명 한글 적용
-  - **테마(Theme) 자동 수집**: 네이버/야후에서 해당 종목의 테마 정보 자동 연동
-  - **정보 링크(Info Link) 추가**: 주달(Judal) 및 야후 파이낸스 상세 보기 링크 자동 생성
-  - **관리 시트 구조 개선**: `구분` 컬럼 전면 배치 및 불필요한 중복 컬럼(`Country`) 삭제
-
-- **v2.4.2** (2026-01-11):
-
-- **v2.0.0** (2026-01-10):
-
-- **v1.4.0** (2026-01-10):
-  - 주말/휴장일 자동 감지 기능 추가
-  - 주말에는 코인 데이터만 수집
-  - 캘린더 이벤트 주말 전용 형식 추가
-  - 월별 시트 Indices Info 컬럼 제거 (중복 제거)
-  - 새 월별 탭 생성 시 최신 구조 자동 적용
 
 ## 📞 문의 및 기여
 
@@ -258,7 +306,24 @@ KRX:005930	삼성전자	코스피	#N/A	#N/A			Samsung Electronics Co Ltd	#N/A
 =GOOGLEFINANCE(A2, "price")
 =GOOGLEFINANCE(A2, "volume") * GOOGLEFINANCE(A2, "price")
 
-## 🚀 Next Steps
+## 📝 작업 일지 및 로드맵 (Work Log & Roadmap)
 
-- [ ] **종목_관리 탭 최적화**: 현재 비어 있는 컬럼들을 시스템 수집 정보(배당률, 매출 성장성 등) 또는 의미 있는 지표들로 채우는 작업 진행 예정.
-- [ ] **정교한 휴장일 감지 로직 (국내/해외)**: 단순히 주말/공휴일 체크를 넘어, `pandas_market_calendars` 라이브러리를 통해 **한국(KRX) 및 미국(NYSE/NASDAQ) 시장**의 실시간 휴장 정보 및 비상사태 등의 특수 상황까지 정확히 반영할 수 있도록 개선 예정.
+### ✅ 최근 완료된 작업 (Recently Completed)
+
+- **월별 시트 및 데이터 정합성 개선 (v2.7.3)**
+  - '월' 탭의 데이터 분류 로직을 개선하여 지수/환율 데이터가 올바른 컬럼에 들어가도록 수정했습니다.
+  - '주의종목' 컬럼의 플레이스홀더 메시지를 정리했습니다.
+
+- **날짜 동기화 및 일관성 확보 (Data Consistency)**
+  - `updater.py`의 `--date` 인자가 모든 탭(`오늘`, `월`, `종목_관리`, `주의종목_버퍼`)과 구글 캘린더 이벤트에 정확히 반영되도록 검증 및 수정했습니다.
+
+- **'오늘' 탭 레이아웃 개편 (Dashboard Layout)**
+  - 국가별(한국/미국) 섹션을 명확히 분리하여 가독성을 높였습니다.
+  - 주말/휴장일에도 가상화폐 등 수집된 데이터는 '오늘' 탭에 표시되도록 필터링 로직을 완화했습니다.
+
+### 🚀 할 일 목록 (To-Do List)
+
+- [ ] **종목_관리 탭 정보 확충**: 현재 비어 있는 컬럼에 배당률, 매출 성장성 등 시스템 수집 정보를 채우는 기능 개발.
+- [ ] **고도화된 휴장일 감지**: `pandas_market_calendars` 라이브러리를 도입하여 한국(KRX) 및 미국(NYSE/NASDAQ) 시장의 공휴일 및 비상 휴장을 정확히 감지.
+- [ ] **CI/CD 파이프라인 최적화**: GitHub Actions 실행 속도 개선을 위한 패키지 캐싱 전략 및 최적화 연구.
+
