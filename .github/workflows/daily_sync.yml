@@ -45,19 +45,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run updater
+      - name: Run Daily Stock Updater (New Architecture)
         env:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
           CALENDAR_ID: ${{ secrets.CALENDAR_ID }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
+          # Determine mode based on schedule or workflow_dispatch input
           if [ "${{ github.event_name }}" == "schedule" ]; then
-            if [ "${{ github.event.schedule }}" == "10 0 * * *" ]; then MODE="MORNING";
+            if [ "${{ github.event.schedule }}" == "20 0 * * *" ]; then MODE="MORNING";
             elif [ "${{ github.event.schedule }}" == "1 3 * * *" ]; then MODE="MIDDAY";
             elif [ "${{ github.event.schedule }}" == "0 7 * * *" ]; then MODE="CLOSE";
             elif [ "${{ github.event.schedule }}" == "1 11 * * *" ]; then MODE="EVENING";
             else MODE="AUTO"; fi
           else
-            MODE="AUTO"
+            MODE="${{ github.event.inputs.mode || 'AUTO' }}"
           fi
-          python updater.py ${{ github.event.inputs.target_date }} --mode $MODE
+          python src/main.py --date "${{ github.event.inputs.target_date }}" --mode $MODE

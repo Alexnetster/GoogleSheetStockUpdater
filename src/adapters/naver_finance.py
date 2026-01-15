@@ -166,3 +166,59 @@ def analyze_market_fdr(min_volume=2000000, min_change=10.0, min_marcap=100000000
     except Exception as e:
         print(f"Error FDR scan: {e}")
         return {'upper': [], 'volume': [], 'rise': []}
+
+def scrape_foreign_buy(max_items=20):
+    """외국인 순매수 종목 스크래핑"""
+    url = "https://finance.naver.com/sise/sise_deal_rank_iframe.naver?sosok=01&investor_gubun=9000&type=buy"
+    
+    try:
+        time.sleep(1)
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        stocks = []
+        
+        tables = soup.select('table')
+        for table in tables:
+            rows = table.select('tr')
+            for row in rows:
+                name_tag = row.select_one('a.tltle')
+                if not name_tag:
+                    continue
+                
+                try:
+                    name = name_tag.text.strip()
+                    href = name_tag.get('href', '')
+                    ticker = href.split('code=')[1].split('&')[0] if 'code=' in href else ''
+                    
+                    if ticker and name:
+                        if any(s['Ticker'] == ticker for s in stocks):
+                            continue
+                            
+                        stocks.append({
+                            'Ticker': ticker,
+                            'Name': name,
+                            'Price': 0,
+                            'ChangeRate': 0.0,
+                            'Volume': 0,
+                            'Category': '외국인순매수',
+                            'Source': 'Naver',
+                            'Asset': 'KR'
+                        })
+                    
+                    if len(stocks) >= max_items:
+                        break
+                        
+                except Exception:
+                    continue
+            
+            if len(stocks) >= max_items:
+                break
+        
+        return stocks
+        
+    except Exception as e:
+        print(f"Error scraping foreign buy: {e}")
+        return []
+

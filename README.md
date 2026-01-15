@@ -34,6 +34,7 @@
 - **제로 하드코딩 (Zero Hardcoding)**: 소스 수정 없이 시트에서 직접 지수(Index), 주요종목(Major), 관심종목(Watchlist) 관리 (v2.4.2)
 - **자동 데이터 수집**: 한국/미국 주식, 주요 지수, 환율, 가상화폐 24시간 추적
 - **버전 히스토리**:
+  - v2.8.0: 모듈형 아키텍처 전환 (`src/main.py` 진입점, 동적 지수 관리, 외국인 매수 통합)
   - v2.7.3: '종목_관리' 탭 시세(현재가/등락/거래량) 컬럼 추가 및 거래량 포맷 개선(K/M/B), 컬럼 순서 최적화(카테고리 우선)
   - v2.7.1: 카테고리 완전 한글화(지수/환율/주요종목/가상화폐/관심종목) 및 시트 명칭 변경(종목_요청/관리)
   - v2.7.0: '오늘' 탭 대시보드화(매번 갱신), '주의종목_버퍼' 도입(누락 방지), 월별 7-Column 구조 개편, 캘린더 연동 고도화
@@ -46,6 +47,7 @@
   - v2.6.2: 월별 탭 '버전' 컬럼을 '갱신날짜'로 변경 (타임스탬프 기록)
   - v2.4.4: 헤더 전면 한글화, 테마 자동 수집, 정보 링크(주달/야후) 추가, 관리 시트 구조 개선
   - v1.4.0: 주말/휴장일 자동 감지, 코인 데이터 수집, 캘린더 이벤트 주말 전용 형식, 표 중복 제거
+
 
 - **동적 종목 관리**: `종목_요청` 시트를 통한 간편한 종목 추가/삭제 및 카테고리 분류
 - **스마트 스키마**: `종목_관리` 시트에 주가 정보(현재가/변동률/거래량) 자동 추가 및 동기화
@@ -104,22 +106,22 @@ graph TD
 
 3. **실행**:
    ```bash
-   python updater.py [options]
-   ```
+## Usage
+Run the updater manually via CLI (using the new modular entry point):
 
-   **커맨드 라인 옵션 (Command Line Arguments):**
-   - `--date YYYY-MM-DD`: 특정 과거 날짜 기준으로 실행합니다. (입력하지 않으면 오늘 날짜)
-   - `--mode [MODE]`: 실행 모드를 강제로 지정합니다. 매개변수: `AUTO` (기본값), `MORNING`, `MIDDAY`, `CLOSE`, `EVENING`
-   - `--debug`: 디버그 모드로 실행합니다. (구글 시트/캘린더에 실제로 쓰지 않고 로그만 출력)
+```bash
+# Default (Auto Mode)
+python src/main.py
 
-   **사용 예시:**
-   ```bash
-   # 과거 데이터(2025-12-25) 기준으로 마감(CLOSE) 리포트 다시 작성
-   python updater.py --date 2025-12-25 --mode CLOSE
+# Specific Mode
+python src/main.py --mode MORNING
+python src/main.py --mode CLOSE
 
-   # 디버깅 모드로 테스트 실행 (기록 안됨)
-   python updater.py --debug
-   ```
+# Specific Date & Debug
+python src/main.py --date 2024-01-01 --debug
+```
+
+*(Note: `updater.py` has been deprecated and renamed to `updater_legacy.py`)*   
 
 > ⚠️ **주의**: 로컬 실행은 개발/테스트 용도이며, 실제 운영은 GitHub Actions에서 자동으로 처리됩니다.
 
@@ -209,30 +211,87 @@ graph TD
 - **� [technical_spec.md](docs/technical_spec.md)**: 기술 명세 및 시스템 아키텍처
 - **🛠️ [initialize_sheet.py](tools/initialize_sheet.py)**: 시트 복구 및 초기화 도구
 - **✅ [verify_sync.py](tools/verify_sync.py)**: 데이터 적재 검증 및 로그 생성 도구
+- **🕷️ [scraper.py](scraper.py)**: 네이버 증권 크롤링(상한가/거래량급증) 및 FDR 전수 조사 모듈 (향후 `src/adapters`로 통합 예정)
 - **📝 [task_log_recent.md](docs/task_log_recent.md)**: 최근 작업 완료 내역 (Archived Task Log)
 
-## �📁 프로젝트 구조 (Project Structure)
+## 📁 프로젝트 구조 (Project Structure)
 
 ```
 GoogleSheetStockUpdater/
-├── updater.py              # 메인 프로그램 (Entry Point)
-├── requirements.txt        # Python 의존성
-├── .env                    # 환경변수 (Secrets)
+├── src/                    # 모듈형 아키텍처 (v2.8.0+)
+│   ├── main.py             # 새 진입점 (Entry Point)
+│   ├── adapters/           # 외부 API 연동
+│   │   ├── google_sheets.py    # Google Sheets API
+│   │   ├── google_calendar.py  # Google Calendar API
+│   │   ├── naver_finance.py    # 네이버 증권 스크래핑 (상한가/거래량/외국인매수)
+│   │   └── yahoo_finance.py    # yfinance 래퍼
+│   ├── services/           # 비즈니스 로직
+│   │   └── pipeline.py     # 데이터 파이프라인 오케스트레이션
+│   └── utils/              # 유틸리티
+│       └── formatters.py   # 가격/숫자 포맷팅
+├── tools/                  # 유지보수 도구
+│   ├── initialize_sheet.py # 시트 복구/초기화
+│   └── verify_sync.py      # 데이터 검증
 ├── .github/
 │   └── workflows/
-│       └── daily_sync.yml  # GitHub Actions 워크플로우
-├── src/                    # 소스 코드 (Core Logic)
-│   ├── adapters/           # 외부 API 연동 (Google Sheets, Calendar)
-│   ├── services/           # 비즈니스 로직 (Pipeline)
-│   └── utils/              # 유틸리티 함수
-├── tools/                  # 유지보수 및 검증 도구
-│   ├── initialize_sheet.py # 시트 할당/헤더 복구
-│   └── verify_sync.py      # 로컬 데이터 검증
-└── docs/                   # 프로젝트 문서
-    ├── setup_guide.md
-    ├── walkthrough.md
-    └── technical_spec.md
+│       ├── daily_sync.yml      # 자동 실행 (src/main.py 사용)
+│       └── maintenance.yml     # 유지보수 워크플로우
+├── docs/                   # 문서
+│   ├── setup_guide.md
+│   ├── walkthrough.md
+│   └── technical_spec.md
+├── requirements.txt        # Python 의존성
+├── .env                    # 환경변수 (로컬 전용)
+├── updater_legacy.py       # 레거시 스크립트 (deprecated)
+└── scraper_legacy.py       # 레거시 스크래퍼 (deprecated)
 ```
+
+## 🔄 아키텍처 마이그레이션 (v2.8.0)
+
+### 모듈형 아키텍처로 전환
+
+기존 단일 파일(`updater.py`) 구조에서 **모듈형 아키텍처**로 전환하여 유지보수성과 테스트 용이성을 대폭 개선했습니다.
+
+#### 주요 변경사항
+
+| 항목 | 이전 (Legacy) | 현재 (v2.8.0+) |
+|:---|:---|:---|
+| **진입점** | `updater.py` | `src/main.py` |
+| **스크래핑** | `scraper.py` | `src/adapters/naver_finance.py` |
+| **구조** | 단일 파일 (1700+ 줄) | 모듈 분리 (관심사 분리) |
+| **테스트** | 어려움 | 단위 테스트 가능 |
+
+#### 새로운 실행 방법
+
+```bash
+# 기본 실행 (AUTO 모드)
+python src/main.py
+
+# 특정 모드 실행
+python src/main.py --mode MORNING
+python src/main.py --mode CLOSE
+
+# 과거 날짜 처리
+python src/main.py --date 2024-01-15 --mode CLOSE
+
+# 디버그 모드 (시트/캘린더 업데이트 안함)
+python src/main.py --debug
+```
+
+#### 레거시 파일 상태
+
+- `updater.py` → `updater_legacy.py` (백업용)
+- `scraper.py` → `scraper_legacy.py` (백업용)
+- 안정화 기간(1주) 후 삭제 예정
+
+### 핵심 개선사항
+
+1. **동적 지수 관리**: '종목_관리' 시트의 'Category' 컬럼 기반으로 지수/환율 자동 인식 (하드코딩 제거)
+2. **외국인 매수 통합**: 기관 매수 트렌드 자동 수집 (`scrape_foreign_buy()`)
+3. **관심사 분리**: Adapter/Service/Utils 계층 명확화
+4. **테스트 용이성**: 각 모듈 독립 테스트 가능
+
+
 
 ## 🛠️ 기술 스택
 
