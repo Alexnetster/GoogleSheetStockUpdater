@@ -123,7 +123,7 @@ def initialize(reset_mode=False):
     # 4. 월별 탭(YYYY-MM) 헤더 보정
     print("\n[월별 일지] 시트 점검 중...")
     # [v2.7.0] 7-Column Schema
-    monthly_headers = ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
+    monthly_headers = ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜시간(KR)']
     for ws in sh.worksheets():
         # YYYY-MM 형식의 제목인지 확인
         title = ws.title

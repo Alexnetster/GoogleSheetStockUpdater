@@ -83,7 +83,7 @@ class GoogleSheetsAdapter:
             return self.sh.worksheet(title)
         except gspread.WorksheetNotFound:
             ws = self.sh.add_worksheet(title=title, rows=1000, cols=20)
-            ws.append_row(['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜'])
+            ws.append_row(['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜시간(KR)'])
             return ws
 
     # Specific Logic for Specific Tabs can be methods here or in Service

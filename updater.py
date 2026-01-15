@@ -898,7 +898,7 @@ class StockDataUpdater:
         """월별 탭 관리 및 반환 (target_date 기준): 7개 컬럼 구조 [v2.7.0]"""
         tab_name = self.target_date.strftime('%Y-%m')
         # [v2.7.0] 7-Column Schema
-        headers = ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
+        headers = ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜시간(KR)']
         
         try:
             ws = self.sh.worksheet(tab_name)
@@ -1456,8 +1456,15 @@ class StockDataUpdater:
         else:
             cal_title = f"투자일지{session_tag} 📅 시장 휴장"
 
+        # [modified] KST Timestamp (Calculated early for usage in both Calendar and Monthly Sheet)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now_kst = now_utc + datetime.timedelta(hours=9)
+        now_str = now_kst.strftime('%Y-%m-%d %H:%M:%S')
+
         # 본문 생성 (New Structure)
         cal_desc_parts = []
+        cal_desc_parts.append(f"🕒 기준: {now_str} (KR)")
+        cal_desc_parts.append("")
         cal_desc_parts.append("## 📊 시장 지표")
         cal_desc_parts.append(final_idx_text if final_idx_text else "-")
         cal_desc_parts.append("")
@@ -1499,12 +1506,7 @@ class StockDataUpdater:
                 cell = m_ws.find(target_date_str, in_column=1)
             except: pass
             
-            # [modified] KST Timestamp for clearer logging
-            # GitHub Actions runs in UTC. Add 9 hours for KST.
-            now_utc = datetime.datetime.now(datetime.timezone.utc)
-            now_kst = now_utc + datetime.timedelta(hours=9)
-            now_str = now_kst.strftime('%Y-%m-%d %H:%M:%S')
-            
+            # now_str is already calculated above (KST)
             row_data = [
                 target_date_str,   # A: 날짜
                 final_idx_text,    # B: 지수/환율

@@ -244,7 +244,7 @@ class StockPipeline:
             else: watchlist_items.append(display_str) # Default
             
         # 2. Build Row
-        # Columns: ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜']
+        # Columns: ['날짜', '지수/환율', '관심종목', '주요종목', '코인', '주의종목', '갱신날짜시간(KR)']
         
         # Indices String Formatting
         # Ex: "USD/KRW: 1,405.50 (+0.12%)\nKOSPI: 2,500.00 (-0.50%)"
