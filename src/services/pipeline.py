@@ -258,7 +258,7 @@ class StockPipeline:
 
             if 'major' in cat_lower or '주요' in cat_lower:
                 cats['major'].append(s)
-            elif 'coin' in cat_lower or 'crypto' in cat_lower or s.asset_type == 'Coin':
+            elif 'coin' in cat_lower or 'crypto' in cat_lower or '가상화폐' in cat_lower or s.asset_type == 'Coin':
                 cats['crypto'].append(s)
             else:
                 cats['watchlist'].append(s)

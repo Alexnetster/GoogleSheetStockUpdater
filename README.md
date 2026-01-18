@@ -367,19 +367,6 @@ python tools/initialize_sheet.py --reset
 
 MIT License
 
-
-
-==== 아래는 수정하지 마시오.
-https://docs.google.com/spreadsheets/d/SHEET_ID/edit?gid=0#gid=0
-tradingSystem2026 시트에 탭은 다음과 같이 구성 되어 있다. 오늘, @스크리너, @이벤트, @PnL로그 
-
-A1: 티커	B1:종목명	C1: 거래소	D1: 종가	E1: 거래대금	F1: PER	G1: 시장	H1: 자동티커	G1: NASDAQ TOP
-KRX:005930	삼성전자	코스피	#N/A	#N/A			Samsung Electronics Co Ltd	#N/A
-=IFERROR(INDEX(SPLIT(IMPORTXML("https://finance.naver.com/item/main.naver?code="&RIGHT(A2,6),"//title"), " :"),1),"unknown")
-=IFERROR(INDEX(IMPORTXML("https://finance.naver.com/item/main.naver?code="&SUBSTITUTE(A2,":",""),"//span[contains(text(),'코스피') or contains(text(),'KOSPI')]"),1),"KOSDAQ")
-=GOOGLEFINANCE(A2, "price")
-=GOOGLEFINANCE(A2, "volume") * GOOGLEFINANCE(A2, "price")
-
 ## 📝 작업 일지 및 로드맵 (Work Log & Roadmap)
 
 ### ✅ 최근 완료된 작업 (Recently Completed)
