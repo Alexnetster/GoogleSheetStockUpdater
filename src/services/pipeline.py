@@ -350,7 +350,12 @@ class StockPipeline:
         # Simple format for monthly cell: [Category] Name (Change%)
         c_lines = []
         for s in cautionary_items:
-            c_lines.append(f"{s.expert_opinion} {s.name} ({s.change_rate:+}%")
+            # Format 2: Reason / Ticker / Name / Price / Change / Source
+            # Reason = s.category (e.g. 상한가)
+            # Source = 네이버증권 (default for KR unusual)
+            source = "네이버증권"
+            line = f"{s.category} / {s.ticker} / {s.name} / {s.formatted_price} / {s.change_rate:+}% / {source}"
+            c_lines.append(line)
         cautionary_text = "\n".join(c_lines)
 
         # Timestamp
